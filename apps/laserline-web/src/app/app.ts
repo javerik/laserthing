@@ -57,7 +57,7 @@ import { LaserlineStore, LlControls, LlLaserView, LlSlicer, LlWindowPortal } fro
           </button>
         </header>
         <ll-controls />
-        <p class="keys">Keys: {{ keys }} · drop .stl / .lscan files anywhere</p>
+        <p class="keys">Keys: {{ keys }} · drop 3D models (STL, 3MF, OBJ, PLY, glTF, STEP) or .lscan files anywhere</p>
       </ng-template>
       @if (store.slicerWindow(); as win) {
         <ll-window-portal [window]="win">

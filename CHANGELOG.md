@@ -3,8 +3,22 @@
 ## Unreleased
 
 ### Added
+- The slicer imports 3MF, OBJ, PLY (ASCII and binary), glTF/GLB and STEP (`.step`/`.stp`)
+  besides STL, natively and in the browser (button and drop). 3MF reads components and
+  Bambu Studio / PrusaSlicer packages (`p:path`); glTF needs embedded buffers. STEP is
+  tessellated with truck behind the `step` feature of `laserline-core` (on in the desktop
+  app and the wasm build). Files that declare a length unit (3MF, glTF, STEP) set the slice
+  settings' unit; a later model without one gets the previous unit back.
+  Core: `laserline_core::formats` (`parse_model`, `ModelFormat`, `EXTENSIONS`),
+  `Mesh::unit`. JS: `Mesh.parse` / `fromArrays` / `unit`, `constants().modelExtensions`,
+  `MODEL_EXTENSIONS`, `MODEL_ACCEPT`, `isModelFile`; the slicing worker parses the file, so
+  `SliceRunner.loadModel` is async and returns `{ triangles, unit }`, and
+  `SliceWorkerClient` gains `parse` while `setModel` takes the parsed arrays.
+  Renamed: `LaserlineStore.importStl` → `importModel`, `FileKind::Stl` → `FileKind::Model`,
+  `LaserUi::import_stl` → `import_model`.
 - `models/l-block.stl`: a stepped, asymmetric L with known dimensions (`models/README.md`)
-  for checking a metric scan against its model.
+  for checking a metric scan against its model, also as `.obj`, `.ply`, `.glb`, `.3mf`
+  (exported by Bambu Studio) and `.step`.
 - Split into libraries and apps: `laserline-core`, `laserline-render`, `laserline-egui`
   (crates.io), `@javerik/laserline` and `@javerik/laserline-angular` (npm), the native
   `laserline-desktop` app and the `laserline-web` Angular app.

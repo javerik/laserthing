@@ -1,5 +1,13 @@
-import { Mesh, type Scan, type SliceRequest, type Slicer } from '../wasm/laserline.js';
+import { Mesh, type ModelUnit, type Scan, type SliceRequest, type Slicer } from '../wasm/laserline.js';
 import type { SliceWorkerClient } from './slice-client.js';
+
+/** A model loaded by {@link SliceRunner.loadModel}. */
+export interface LoadedModel {
+  /** Number of triangles. */
+  triangles: number;
+  /** Unit the file declares; the slicer's settings now use it. */
+  unit?: ModelUnit;
+}
 
 /**
  * Connects a `Slicer` to a `SliceWorkerClient`: runs what the slicer requests,
@@ -9,6 +17,7 @@ export class SliceRunner {
   /** Progress (0..1) of the running slice, `undefined` when idle. */
   progress: number | undefined;
   private job: number | undefined;
+  private parsing = 0;
 
   /** `onScan` receives each current scan; it owns it and must free it. */
   constructor(
@@ -18,15 +27,26 @@ export class SliceRunner {
     private readonly onScan: (scan: Scan) => void,
   ) {}
 
-  /** Parses an STL file (throws on errors) and loads it; returns its triangle count. */
-  loadModel(bytes: Uint8Array, name: string, location = name): number {
-    const mesh = Mesh.parseStl(bytes);
-    const triangles = mesh.triangleCount;
+  /**
+   * Parses a model file in the worker (any format of `constants().modelExtensions`) and
+   * loads it. Rejects on errors, and with `Error(constants().cancelled)` when another
+   * load supersedes it.
+   */
+  async loadModel(bytes: Uint8Array, name: string, location = name): Promise<LoadedModel> {
+    // A slice started meanwhile would cancel the parse; polling waits for it instead.
+    this.parsing++;
+    let parsed;
+    try {
+      parsed = await this.client.parse(bytes, name);
+    } finally {
+      this.parsing--;
+    }
+    const mesh = Mesh.fromArrays(parsed.vertices, parsed.triangles, parsed.unit);
     const request = this.slicer.setModel(mesh, name, location);
     mesh.free();
-    this.client.setModel(this.slicer.model()!.id, bytes);
+    this.client.setModel(this.slicer.model()!.id, parsed);
     if (request) this.run(request);
-    return triangles;
+    return { triangles: parsed.triangles.length / 3, unit: parsed.unit };
   }
 
   /** Slices with the current settings. */
@@ -37,6 +57,7 @@ export class SliceRunner {
 
   /** Call every frame with a clock in seconds (e.g. `performance.now() / 1000`). */
   poll(nowS: number): void {
+    if (this.parsing) return;
     if (this.job !== undefined && this.slicer.running !== this.job) this.cancel();
     const request = this.slicer.poll(nowS);
     if (request) this.run(request);

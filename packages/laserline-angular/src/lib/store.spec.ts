@@ -11,6 +11,7 @@ import {
   profileCurve,
   slice,
 } from '@javerik/laserline';
+import { serveSlicing } from '@javerik/laserline/worker';
 import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { LASERLINE_CONFIG, type LaserlineConfig } from './config';
@@ -28,6 +29,29 @@ async function store(storagePrefix: string | null = 'test.', extra: Partial<Lase
   const s = TestBed.inject(LaserlineStore);
   await s.loaded;
   return s;
+}
+
+/** A `Worker` whose other end is `serveSlicing` in this thread. */
+class FakeWorker {
+  onmessage?: (e: { data: unknown }) => void;
+  private readonly listeners: ((e: MessageEvent) => void)[] = [];
+  private alive = true;
+
+  constructor() {
+    serveSlicing({
+      postMessage: (msg) => setTimeout(() => this.alive && this.onmessage?.({ data: structuredClone(msg) })),
+      addEventListener: (_type, listener) => this.listeners.push(listener),
+    });
+  }
+
+  postMessage(msg: unknown): void {
+    const data = structuredClone(msg);
+    setTimeout(() => this.alive && this.listeners.forEach((l) => l({ data } as MessageEvent)));
+  }
+
+  terminate(): void {
+    this.alive = false;
+  }
 }
 
 /** In-memory `localStorage` (Node's own Web Storage hides jsdom's without a backing file). */
@@ -92,6 +116,21 @@ describe('LaserlineStore', () => {
     s.dispatch('toggleControlsHidden');
     expect(s.controls()).toBe('docked');
     expect(s.dispatch('exitFullscreen')).toBe(false);
+  });
+
+  it('imports models in the slicing worker and takes their unit', async () => {
+    const s = await store('test.', { createWorker: () => new FakeWorker() as unknown as Worker });
+    s.setSliceSettings({ ...s.sliceSettings(), unit: 'Inch' });
+    const bytes = await readFile(resolve('models/l-block.3mf'));
+    await s.openFile(new File([bytes], 'l-block.3mf'));
+    expect(s.status()).toBe('Imported l-block.3mf (62 triangles, unit mm from the file)');
+    expect(s.sliceSettings().unit).toBe('Mm');
+    expect(s.slicerOpen()).toBe(true);
+    await s.openFile(new File([new Uint8Array([1])], 'x.obj'));
+    expect(s.status()).toMatch(/^Import failed: x.obj: OBJ: no triangles/);
+    await s.openFile(new File([], 'notes.txt'));
+    expect(s.status()).toMatch(/^notes.txt: expected a 3D model/);
+    s.ngOnDestroy();
   });
 
   it('reports unreadable scan files', async () => {

@@ -1,10 +1,8 @@
-//! Triangle meshes: STL loading and the transform into the scan frame.
-//!
-//! STL is parsed here rather than with a crate because many CAD exporters write
-//! binary files whose 80-byte header starts with "solid", which naive format
-//! probes mistake for ASCII. The binary size check is unambiguous.
+//! Triangle meshes and the transform into the scan frame. The model file formats
+//! are read in [`crate::formats`].
 
-use crate::scan::{SliceSettings, UpAxis};
+use crate::formats::{self, ModelFormat};
+use crate::scan::{ModelUnit, SliceSettings, UpAxis};
 use std::collections::HashMap;
 
 /// Indexed triangle mesh in model units.
@@ -14,6 +12,8 @@ pub struct Mesh {
     pub vertices: Vec<[f32; 3]>,
     /// Triangles as indices into `vertices`.
     pub triangles: Vec<[u32; 3]>,
+    /// Unit the file declares its coordinates in, if its format has one (3MF, glTF, STEP).
+    pub unit: Option<ModelUnit>,
 }
 
 impl Mesh {
@@ -41,85 +41,19 @@ pub fn bounds(points: &[[f32; 3]]) -> ([f32; 3], [f32; 3]) {
 
 /// Parses a binary or ASCII STL file.
 pub fn parse_stl(bytes: &[u8]) -> Result<Mesh, String> {
-    let mut builder = Builder::default();
-    if is_binary(bytes) {
-        parse_binary(bytes, &mut builder)?;
-    } else {
-        parse_ascii(bytes, &mut builder)?;
-    }
-    if builder.mesh.triangles.is_empty() {
-        return Err("no triangles found".into());
-    }
-    Ok(builder.mesh)
-}
-
-fn is_binary(bytes: &[u8]) -> bool {
-    if bytes.len() < 84 {
-        return false;
-    }
-    let count = u32::from_le_bytes(bytes[80..84].try_into().unwrap()) as usize;
-    let expected = 84usize.saturating_add(count.saturating_mul(50));
-    if expected == bytes.len() {
-        return true;
-    }
-    // Not an exact binary size: ASCII if it looks like text, else binary with trailing junk.
-    let text_start = bytes.iter().position(|b| !b.is_ascii_whitespace()).unwrap_or(0);
-    !bytes[text_start..].starts_with(b"solid") && expected < bytes.len()
-}
-
-fn parse_binary(bytes: &[u8], b: &mut Builder) -> Result<(), String> {
-    let count = u32::from_le_bytes(bytes[80..84].try_into().unwrap()) as usize;
-    let f = |o: usize| f32::from_le_bytes(bytes[o..o + 4].try_into().unwrap());
-    for t in 0..count {
-        let base = 84 + t * 50 + 12; // skip the stored normal
-        if base + 36 > bytes.len() {
-            return Err(format!("binary STL truncated at triangle {t} of {count}"));
-        }
-        let v = |i: usize| [f(base + i * 12), f(base + i * 12 + 4), f(base + i * 12 + 8)];
-        b.push_triangle([v(0), v(1), v(2)]);
-    }
-    Ok(())
-}
-
-fn parse_ascii(bytes: &[u8], b: &mut Builder) -> Result<(), String> {
-    let text = std::str::from_utf8(bytes).map_err(|_| "not a valid ASCII or binary STL file")?;
-    let mut tokens = text.split_ascii_whitespace();
-    if tokens.next() != Some("solid") {
-        return Err("not a valid ASCII or binary STL file".into());
-    }
-    let mut corners = Vec::with_capacity(3);
-    while let Some(tok) = tokens.next() {
-        match tok {
-            "vertex" => {
-                let mut v = [0.0f32; 3];
-                for c in &mut v {
-                    let s = tokens.next().ok_or("unexpected end of file in vertex")?;
-                    *c = s.parse().map_err(|_| format!("bad number “{s}”"))?;
-                }
-                corners.push(v);
-            }
-            "endloop" => {
-                // Polygons with more than three corners are fanned into triangles.
-                for i in 1..corners.len().saturating_sub(1) {
-                    b.push_triangle([corners[0], corners[i], corners[i + 1]]);
-                }
-                corners.clear();
-            }
-            _ => {}
-        }
-    }
-    Ok(())
+    formats::parse(bytes, ModelFormat::Stl)
 }
 
 /// Collects triangles while merging identical vertices.
 #[derive(Default)]
-struct Builder {
+pub(crate) struct Builder {
     mesh: Mesh,
     index: HashMap<[u32; 3], u32>,
 }
 
 impl Builder {
-    fn push_triangle(&mut self, corners: [[f32; 3]; 3]) {
+    /// Adds a triangle; degenerate ones and ones with non-finite corners are dropped.
+    pub(crate) fn push_triangle(&mut self, corners: [[f32; 3]; 3]) {
         if corners.iter().flatten().any(|c| !c.is_finite()) {
             return;
         }
@@ -132,6 +66,22 @@ impl Builder {
         if tri[0] != tri[1] && tri[1] != tri[2] && tri[0] != tri[2] {
             self.mesh.triangles.push(tri);
         }
+    }
+
+    /// Adds a polygon, fanned into triangles from its first corner.
+    pub(crate) fn push_polygon(&mut self, corners: &[[f32; 3]]) {
+        for i in 1..corners.len().saturating_sub(1) {
+            self.push_triangle([corners[0], corners[i], corners[i + 1]]);
+        }
+    }
+
+    /// The mesh, with the unit its file declares; fails when it has no triangles.
+    pub(crate) fn finish(mut self, unit: Option<ModelUnit>) -> Result<Mesh, String> {
+        if self.mesh.triangles.is_empty() {
+            return Err("no triangles found".into());
+        }
+        self.mesh.unit = unit;
+        Ok(self.mesh)
     }
 }
 
@@ -214,47 +164,6 @@ mod tests {
     use super::*;
     use crate::scan::{Axis, ModelUnit};
 
-    fn to_binary(m: &Mesh) -> Vec<u8> {
-        let mut out = b"solid but actually binary".to_vec();
-        out.resize(80, 0);
-        out.extend((m.triangles.len() as u32).to_le_bytes());
-        for t in &m.triangles {
-            out.extend([0u8; 12]);
-            for &i in t {
-                for c in m.vertices[i as usize] {
-                    out.extend(c.to_le_bytes());
-                }
-            }
-            out.extend([0u8; 2]);
-        }
-        out
-    }
-
-    #[test]
-    fn ascii_stl() {
-        let src = "solid test\n facet normal 0 0 1\n  outer loop\n   vertex 0 0 0\n   vertex 1 0 0\n   vertex 0 1 1e0\n  endloop\n endfacet\n\
-                   facet normal 0 0 1\n  outer loop\n   vertex 1 0 0\n   vertex 1 1 0\n   vertex 0 1 1\n  endloop\n endfacet\nendsolid test\n";
-        let m = parse_stl(src.as_bytes()).unwrap();
-        assert_eq!(m.triangles.len(), 2);
-        assert_eq!(m.vertices.len(), 4, "shared vertices are merged");
-        assert_eq!(m.bounds(), ([0.0; 3], [1.0, 1.0, 1.0]));
-    }
-
-    #[test]
-    fn binary_stl_with_solid_header() {
-        let m = box_mesh([0.0; 3], [1.0, 2.0, 3.0]);
-        let parsed = parse_stl(&to_binary(&m)).unwrap();
-        assert_eq!(parsed.triangles.len(), 12);
-        assert_eq!(parsed.vertices.len(), 8);
-        assert_eq!(parsed.bounds(), ([0.0; 3], [1.0, 2.0, 3.0]));
-    }
-
-    #[test]
-    fn rejects_garbage() {
-        assert!(parse_stl(b"hello").is_err());
-        assert!(parse_stl(b"solid x\nendsolid x\n").is_err());
-    }
-
     #[test]
     fn scan_frame_mapping() {
         // 10 (x) × 20 (y) × 30 (z) box, Y up, travel along Z, in cm.
@@ -279,7 +188,7 @@ mod tests {
     /// The determinant of the transform `to_scan_frame` actually applies, from where it
     /// sends the unit vectors (differences cancel the shift).
     fn applied_det(s: &SliceSettings) -> f32 {
-        let m = Mesh { vertices: vec![[0.0; 3], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]], triangles: vec![] };
+        let m = Mesh { vertices: vec![[0.0; 3], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]], ..Default::default() };
         let p = to_scan_frame(&m, s);
         let col = |k: usize| [p[k][0] - p[0][0], p[k][1] - p[0][1], p[k][2] - p[0][2]];
         let (a, b, c) = (col(1), col(2), col(3));

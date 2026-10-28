@@ -4,7 +4,7 @@
 use crate::files::{FileHost, FileKind, OpenedFile};
 use crate::layout::{Action, Layout};
 use crate::callbacks::{self, LaserCallback};
-use crate::slicer_ui::{profile_plot, scan_summary};
+use crate::slicer_ui::{profile_plot, scan_summary, unit_label};
 use crate::worker::SliceWorker;
 use egui::{self, Color32, RichText, Slider, Stroke, Ui};
 use laserline_core::emulator::{Emulator, LiveInfo};
@@ -16,7 +16,8 @@ use laserline_core::params::{
 };
 use laserline_core::scan::{DisplayMapping, Scan, SliceSettings};
 use laserline_core::slicer::Slicer;
-use laserline_core::{mesh, presets, scan_file};
+use laserline_core::formats::{self, ModelFormat};
+use laserline_core::{presets, scan_file};
 use std::sync::Arc;
 
 const WAVELENGTH_PRESETS: [f32; 5] = [405.0, 450.0, 520.0, 635.0, 660.0];
@@ -100,15 +101,17 @@ impl LaserUi {
         }
     }
 
-    /// Loads an STL model into the slicer and shows it.
+    /// Loads a 3D model into the slicer and shows it. A unit its file declares becomes
+    /// the slice settings' unit.
     pub fn open_model(&mut self, file: OpenedFile) -> Result<(), String> {
-        let mesh = mesh::parse_stl(&file.bytes).map_err(|e| format!("{}: {e}", file.location))?;
+        let mesh = formats::parse_model(&file.bytes, &file.name).map_err(|e| format!("{}: {e}", file.location))?;
         let n = mesh.triangles.len();
+        let unit = mesh.unit.map_or(String::new(), |u| format!(", unit {} from the file", unit_label(u)));
         if let Some(req) = self.slicer.set_model(mesh, file.name, file.location.clone()) {
             self.worker.spawn(req);
         }
         self.slicer_open = true;
-        self.set_status(format!("Imported {} ({n} triangles)", file.location));
+        self.set_status(format!("Imported {} ({n} triangles{unit})", file.location));
         Ok(())
     }
 
@@ -123,10 +126,12 @@ impl LaserUi {
     /// Opens a model or a scan, chosen by the file extension.
     pub fn open_file(&mut self, file: OpenedFile) -> Result<(), String> {
         let ext = file.name.rsplit_once('.').map_or("", |(_, e)| e).to_ascii_lowercase();
-        match ext.as_str() {
-            "stl" => self.open_model(file),
-            "lscan" => self.open_scan(file),
-            _ => Err(format!("{}: expected an .stl or .lscan file", file.location)),
+        if ext == scan_file::EXTENSION {
+            self.open_scan(file)
+        } else if ModelFormat::from_name(&file.name).is_some() {
+            self.open_model(file)
+        } else {
+            Err(format!("{}: expected a 3D model (STL, 3MF, OBJ, PLY, glTF, STEP) or an .lscan file", file.location))
         }
     }
 
@@ -139,9 +144,9 @@ impl LaserUi {
         self.emu.set_scan(scan);
     }
 
-    /// Asks for an STL file and loads it into the slicer.
-    pub fn import_stl(&mut self, files: &mut dyn FileHost) {
-        let result = files.open(FileKind::Stl).and_then(|f| f.map_or(Ok(()), |f| self.open_model(f)));
+    /// Asks for a 3D model and loads it into the slicer.
+    pub fn import_model(&mut self, files: &mut dyn FileHost) {
+        let result = files.open(FileKind::Model).and_then(|f| f.map_or(Ok(()), |f| self.open_model(f)));
         if let Err(e) = result {
             self.set_status(format!("Import failed: {e}"));
         }
@@ -333,8 +338,8 @@ impl LaserUi {
     /// Scan playback: import, load, save and the playback parameters.
     pub fn object_scan_ui(&mut self, ui: &mut Ui, files: &mut dyn FileHost) {
         ui.horizontal_wrapped(|ui| {
-            if ui.button("📂 Import STL…").clicked() {
-                self.import_stl(files);
+            if ui.button("📂 Import model…").clicked() {
+                self.import_model(files);
             }
             let open = self.slicer_open;
             if ui.selectable_label(open, "🔧 Slicer").on_hover_text("Slice settings and 3D preview").clicked() {
@@ -351,7 +356,7 @@ impl LaserUi {
             ui.add(egui::Spinner::new());
         }
         let Some(scan) = self.emu.scan.clone() else {
-            ui.label(RichText::new("No scan loaded. Import an STL model or load a .lscan file.").weak());
+            ui.label(RichText::new("No scan loaded. Import a 3D model (STL, 3MF, OBJ, PLY, glTF, STEP) or load a .lscan file.").weak());
             return;
         };
         scan_summary(ui, &scan);

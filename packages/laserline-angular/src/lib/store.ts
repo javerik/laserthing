@@ -25,10 +25,12 @@ import {
   type ViewPoint,
   builtinPresets,
   calibrationParams,
+  constants,
   defaultParams,
   defaultSliceSettings,
   downloadBytes,
   init,
+  isModelFile,
   isOverlayPattern,
   openPopup,
   patternParams,
@@ -728,25 +730,32 @@ export class LaserlineStore implements OnDestroy {
 
   // ---- scans and models
 
-  /** Opens an `.stl` model (into the slicer) or a `.lscan` scan. */
+  /** Opens a model (into the slicer, see `MODEL_EXTENSIONS`) or a `.lscan` scan. */
   async openFile(file: File): Promise<void> {
-    const ext = file.name.split('.').pop()?.toLowerCase();
-    if (ext === 'stl') await this.importStl(file);
-    else if (ext === 'lscan') await this.loadScan(file);
-    else this.setStatus(`${file.name}: expected an .stl or .lscan file`);
+    if (isModelFile(file.name)) await this.importModel(file);
+    else if (file.name.toLowerCase().endsWith('.lscan')) await this.loadScan(file);
+    else this.setStatus(`${file.name}: expected a 3D model (STL, 3MF, OBJ, PLY, glTF, STEP) or an .lscan file`);
   }
 
-  /** Loads an STL model into the slicer and opens it; errors go to `status`. */
-  async importStl(file: File): Promise<void> {
+  /**
+   * Loads a 3D model into the slicer (parsed in the slicing worker) and opens it; errors
+   * go to `status`. A unit the file declares becomes the slice settings' unit.
+   */
+  async importModel(file: File): Promise<void> {
     if (!this.runner) {
       this.setStatus('Import failed: no slicing worker configured');
       return;
     }
+    this.setStatus(`Importing ${file.name}…`);
     try {
-      const triangles = this.runner.loadModel(await readFileBytes(file), file.name);
+      const { triangles, unit } = await this.runner.loadModel(await readFileBytes(file), file.name);
+      this.sliceSettings.set(this.slicerCore!.settings as FullSliceSettings);
+      this.schedulePersist();
       this.slicerOpen.set(true);
-      this.setStatus(`Imported ${file.name} (${triangles} triangles)`);
+      this.setStatus(`Imported ${file.name} (${triangles} triangles${unit ? `, unit ${unit.toLowerCase()} from the file` : ''})`);
     } catch (e) {
+      // Superseded by a newer import, which reports for itself.
+      if (message(e) === constants().cancelled) return;
       this.setStatus(`Import failed: ${file.name}: ${message(e)}`);
     }
     this.refreshSlicer();

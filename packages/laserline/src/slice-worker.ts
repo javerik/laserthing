@@ -28,11 +28,16 @@ export function serveSlicing(scope: WorkerScope = self as unknown as WorkerScope
       return;
     }
     await (ready ??= init());
-    const id = msg.type === 'slice' ? msg.id : -1;
+    const id = msg.type === 'slice' || msg.type === 'parse' ? msg.id : -1;
     try {
-      if (msg.type === 'model') {
+      if (msg.type === 'parse') {
+        const mesh = Mesh.parse(msg.bytes, msg.name);
+        const parsed = { vertices: mesh.vertices(), triangles: mesh.triangles(), unit: mesh.unit };
+        mesh.free();
+        scope.postMessage({ type: 'parsed', id, model: parsed }, [parsed.vertices.buffer, parsed.triangles.buffer]);
+      } else if (msg.type === 'model') {
         model?.mesh.free();
-        model = { id: msg.modelId, mesh: Mesh.parseStl(msg.bytes) };
+        model = { id: msg.modelId, mesh: Mesh.fromArrays(msg.vertices, msg.triangles, undefined) };
       } else if (msg.type === 'slice') {
         if (model?.id !== msg.modelId) throw new Error('model not loaded in the worker');
         const t0 = performance.now();
@@ -44,7 +49,10 @@ export function serveSlicing(scope: WorkerScope = self as unknown as WorkerScope
         scope.postMessage({ type: 'done', id, bytes, durationS }, [bytes.buffer]);
       }
     } catch (e) {
-      scope.postMessage({ type: 'error', id, message: e instanceof Error ? e.message : String(e) });
+      // A trap (a Rust panic) leaves the module in an undefined state.
+      const fatal = e instanceof WebAssembly.RuntimeError;
+      const message = fatal ? `internal error (${e.message})` : e instanceof Error ? e.message : String(e);
+      scope.postMessage({ type: 'error', id, message, fatal });
     }
   });
 }

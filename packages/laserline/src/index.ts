@@ -1,11 +1,11 @@
 /**
- * Laser line emulator and laser-triangulation STL slicer for the browser.
+ * Laser line emulator and laser-triangulation slicer of 3D models for the browser.
  *
  * Call {@link init} once before using anything else. Then:
  * - `Emulator` + `LaserView`: the animated laser line on a canvas,
  *   {@link DetachedLaserView}: the same in a window of its own,
- * - `Slicer` + `MeshView` + {@link SliceRunner}: STL import, slicing in a Web
- *   Worker and the 3D preview,
+ * - `Slicer` + `MeshView` + {@link SliceRunner}: model import (STL, 3MF, OBJ, PLY,
+ *   glTF/GLB, STEP) and slicing in a Web Worker, and the 3D preview,
  * - `Scan`, `Mesh`, presets and plot helpers,
  * - {@link actionForKey}: the keyboard shortcuts shared with the desktop app,
  * - {@link RemoteHost}: lets another page (e.g. a camera calibration) drive the line.
@@ -17,10 +17,10 @@ export * from '../wasm/laserline.js';
 export { AnimationLoop, type FrameScheduler } from './loop.js';
 export { DetachedLaserView, type DetachedViewOptions } from './detached-view.js';
 export { CanvasBridge, openPopup, type PopupOptions } from './popup.js';
-export { readFileBytes, downloadBytes } from './files.js';
+export { MODEL_ACCEPT, MODEL_EXTENSIONS, downloadBytes, isModelFile, readFileBytes } from './files.js';
 export { SliceWorkerClient, type SliceResult } from './slice-client.js';
-export type { FromWorker, ToWorker } from './protocol.js';
-export { SliceRunner } from './slice-runner.js';
+export type { FromWorker, ParsedModel, ToWorker } from './protocol.js';
+export { SliceRunner, type LoadedModel } from './slice-runner.js';
 export { type Action, type Shortcut, SHORTCUTS, actionForKey, shortcutHelp } from './keys.js';
 export {
   type OverlayPattern,

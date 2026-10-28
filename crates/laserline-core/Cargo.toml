@@ -1,6 +1,6 @@
 [package]
 name = "laserline-core"
-description = "Laser line emulation and laser-triangulation slicing of STL meshes, without GUI or GPU dependencies"
+description = "Laser line emulation and laser-triangulation slicing of 3D models (STL, 3MF, OBJ, PLY, glTF, STEP), without GUI or GPU dependencies"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -9,7 +9,7 @@ authors.workspace = true
 repository.workspace = true
 homepage.workspace = true
 readme = "README.md"
-keywords = ["laser", "triangulation", "stl", "slicer", "emulator"]
+keywords = ["laser", "triangulation", "stl", "slicer", "step"]
 categories = ["science", "simulation", "graphics", "wasm"]
 
 [package.metadata.docs.rs]
@@ -20,11 +20,25 @@ all-features = true
 test-utils = []
 # TypeScript definitions of the serde types (used by the wasm bindings).
 wasm = ["dep:tsify", "dep:wasm-bindgen"]
+# STEP import (`formats`), tessellated with truck.
+step = ["dep:truck-stepio", "dep:truck-meshalgo", "dep:getrandom"]
 
 [dependencies]
+base64.workspace = true
 bytemuck.workspace = true
 glam.workspace = true
+miniz_oxide.workspace = true
+quick-xml.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+truck-meshalgo = { workspace = true, optional = true }
+truck-stepio = { workspace = true, optional = true }
 tsify = { workspace = true, optional = true }
 wasm-bindgen = { workspace = true, optional = true }
+
+# truck draws random numbers through rand 0.8, whose getrandom needs `js` on wasm32.
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+getrandom = { version = "0.2", features = ["js"], optional = true }
+
+[dev-dependencies]
+truck-modeling.workspace = true

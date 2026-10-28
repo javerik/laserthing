@@ -1,7 +1,7 @@
 # laserline-egui
 
 egui frontend of [laserline](https://git.javerik.dev/opensource/laserthing) for native
-applications: the live laser view, the control panel and the STL slicer with 3D preview,
+applications: the live laser view, the control panel and the slicer of 3D models (STL, 3MF, OBJ, PLY, glTF, STEP) with 3D preview,
 range image and profile plot, plus the window layout and keyboard shortcuts of the
 desktop app.
 
