@@ -257,7 +257,8 @@ impl Slicer {
         self.inner.auto = auto;
     }
 
-    /// Loads a model. Returns the slice to run when auto re-slicing is on.
+    /// Loads a model; a unit its file declares (`Mesh.unit`) replaces the settings' unit.
+    /// Returns the slice to run when auto re-slicing is on.
     #[wasm_bindgen(js_name = setModel, unchecked_return_type = "SliceRequest | undefined")]
     pub fn set_model(&mut self, mesh: &Mesh, name: &str, location: &str) -> JsValue {
         request(self.inner.set_model(mesh.inner.clone(), name, location))

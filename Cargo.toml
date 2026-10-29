@@ -20,6 +20,13 @@ bytemuck = { version = "1.25.2", features = ["derive"] }
 glam = "0.34.1"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
+# Model file formats (laserline-core::formats).
+base64 = "0.22.1"
+miniz_oxide = "0.9.1"
+quick-xml = { version = "0.41.0", default-features = false }
+truck-meshalgo = { version = "0.4.0", default-features = false, features = ["tessellation"] }
+truck-modeling = "0.6.0"
+truck-stepio = "0.3.0"
 eframe = "0.33.3"
 egui = { version = "0.33.3", default-features = false }
 egui-wgpu = { version = "0.33.3", default-features = false }

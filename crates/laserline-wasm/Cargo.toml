@@ -16,7 +16,7 @@ name = "laserline"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-laserline-core = { workspace = true, features = ["wasm"] }
+laserline-core = { workspace = true, features = ["wasm", "step"] }
 laserline-render.workspace = true
 serde.workspace = true
 wasm-bindgen.workspace = true

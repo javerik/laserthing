@@ -1,14 +1,16 @@
 # laserline
 
-Emulates the laser line of a laser-triangulation sensor and slices STL models into the
+Emulates the laser line of a laser-triangulation sensor and slices 3D models into the
 profiles such a sensor would measure. Runs natively (egui) and in the browser
 (WebAssembly with WebGPU or WebGL2, Angular components).
 
 - **Live line**: intensity, width, Gaussian / top-hat / hard profile, wavelength colour,
   sweep and oscillation, deformation shapes, speckle, ambient light and sensor noise.
-- **Object scans**: slice an STL model as a sensor with a given triangulation angle sees
-  it (including camera occlusion), preview it in 3D, and play the profiles back through
-  the line. Scans save as `.lscan` files.
+- **Object scans**: slice a 3D model (STL, 3MF, OBJ, PLY, glTF/GLB, STEP) as a sensor with
+  a given triangulation angle sees it (including camera occlusion), preview it in 3D, and
+  play the profiles back through the line. Scans save as `.lscan` files. 3MF, glTF and
+  STEP files bring their length unit along; STEP's surfaces are tessellated on import
+  (single parts: assembly placements are not applied).
 - **Camera calibration** (web): another page of the same origin can drive the line over a
   `BroadcastChannel` to calibrate a camera filming the screen, then outline the camera's
   field and fit the line into it (`RemoteHost`, see `packages/laserline/README.md`). Its
@@ -19,7 +21,7 @@ profiles such a sensor would measure. Runs natively (egui) and in the browser
 
 | Path | What | Published as |
 |---|---|---|
-| `crates/laserline-core` | Pure logic: parameters, laser model, STL parsing, slicing, `.lscan`, emulator and slicer state. Native and wasm32. | crates.io `laserline-core` |
+| `crates/laserline-core` | Pure logic: parameters, laser model, model file parsing, slicing, `.lscan`, emulator and slicer state. Native and wasm32. | crates.io `laserline-core` |
 | `crates/laserline-render` | wgpu renderers (laser pass, 3D preview); WebGL2-compatible shaders. | crates.io `laserline-render` |
 | `crates/laserline-egui` | egui panels and views for native apps. | crates.io `laserline-egui` |
 | `crates/laserline-wasm` | wasm-bindgen bindings. | npm `@javerik/laserline` (via `packages/laserline`) |
@@ -33,7 +35,7 @@ profiles such a sensor would measure. Runs natively (egui) and in the browser
 Native app:
 
 ```sh
-cargo run --release -p laserline-desktop -- [model.stl | scan.lscan]
+cargo run --release -p laserline-desktop -- [model.stl|.3mf|.obj|.ply|.glb|.step | scan.lscan]
 ```
 
 Web (needs the `wasm32-unknown-unknown` target and the matching `wasm-bindgen-cli`, see

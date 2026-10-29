@@ -58,11 +58,11 @@ impl LaserApp {
         })
     }
 
-    /// Opens an `.stl` model (into the slicer) or a `.lscan` scan given on the command line.
+    /// Opens a 3D model (into the slicer) or a `.lscan` scan given on the command line.
+    /// Opening reports for itself (e.g. the model's triangles).
     pub fn open_path(&mut self, path: &std::path::Path) {
-        match native_files::read(path).and_then(|f| self.ui.open_file(f)) {
-            Ok(()) => self.ui.set_status(format!("Opened {}", path.display())),
-            Err(e) => self.ui.set_status(e),
+        if let Err(e) = native_files::read(path).and_then(|f| self.ui.open_file(f)) {
+            self.ui.set_status(e);
         }
     }
 

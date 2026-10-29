@@ -16,6 +16,8 @@ path = "src/main.rs"
 
 [dependencies]
 laserline-egui.workspace = true
+# STEP import (tessellated with truck).
+laserline-core = { workspace = true, features = ["step"] }
 eframe = { workspace = true, features = ["wgpu", "persistence"] }
 rfd.workspace = true
 serde.workspace = true

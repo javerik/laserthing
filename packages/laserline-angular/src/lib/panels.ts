@@ -1,5 +1,5 @@
 import { ChangeDetectionStrategy, Component, computed, inject, input, signal } from '@angular/core';
-import type { Scan } from '@javerik/laserline';
+import { MODEL_ACCEPT, type Scan } from '@javerik/laserline';
 import {
   LlColorControls,
   LlDeformControls,
@@ -140,14 +140,14 @@ export class LlProfileStepper {
   readonly rows = input.required<number>();
 }
 
-/** STL import, scan files and how the scan drives the line. */
+/** Model import, scan files and how the scan drives the line. */
 @Component({
   selector: 'll-object-scan',
   imports: [LlFileButton, LlScanParamsControls, LlScanSummary, LlProfileStepper, LlProfilePlot],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     <div class="row">
-      <ll-file-button accept=".stl" [disabled]="!store.canSlice" (file)="store.importStl($event)">📂 Import STL…</ll-file-button>
+      <ll-file-button [accept]="modelAccept" [disabled]="!store.canSlice" (file)="store.importModel($event)">📂 Import model…</ll-file-button>
       <button type="button" [class.on]="store.slicerOpen()" title="Slice settings and 3D preview" (click)="store.slicerOpen.set(!store.slicerOpen())">🔧 Slicer</button>
       <ll-file-button accept=".lscan" (file)="store.loadScan($event)">Load scan…</ll-file-button>
       <button type="button" [disabled]="!store.scan()" (click)="store.saveScan()">Save scan…</button>
@@ -170,13 +170,14 @@ export class LlProfileStepper {
       <ll-profile-stepper [rows]="scan.rows" />
       <ll-profile-plot [scan]="scan" [row]="store.row()" style="height: 56px" />
     } @else {
-      <span class="weak">No scan loaded. Import an STL model or load a .lscan file.</span>
+      <span class="weak">No scan loaded. Import a 3D model (STL, 3MF, OBJ, PLY, glTF, STEP) or load a .lscan file.</span>
     }
   `,
   styles: [THEME, `:host { display: flex; flex-direction: column; gap: 6px; } progress { width: 100%; accent-color: var(--_accent); }`],
 })
 export class LlObjectScan {
   protected readonly store = inject(LaserlineStore);
+  protected readonly modelAccept = MODEL_ACCEPT;
 
   protected setEnabled(enabled: boolean): void {
     this.store.patchParams({ scan: { ...this.store.params().scan, enabled } });

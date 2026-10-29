@@ -4,6 +4,7 @@
 pub mod calibration;
 pub mod camera;
 pub mod emulator;
+pub mod formats;
 pub mod gpu_types;
 pub mod mesh;
 pub mod metric;

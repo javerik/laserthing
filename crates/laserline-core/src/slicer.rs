@@ -10,7 +10,7 @@
 use crate::camera::OrbitCamera;
 use crate::gpu_types::GpuMesh;
 use crate::mesh::{self, Mesh};
-use crate::scan::{Scan, SliceSettings};
+use crate::scan::{ModelUnit, Scan, SliceSettings};
 use crate::viz;
 use glam::Vec3;
 use std::sync::Arc;
@@ -98,6 +98,8 @@ pub struct Slicer {
     /// 3D view camera; reset when a new model is loaded.
     pub camera: Option<OrbitCamera>,
     preview: Option<Preview>,
+    /// The unit a model's file set, and the unit the settings had before it.
+    file_unit: Option<(ModelUnit, ModelUnit)>,
     next_id: u64,
 }
 
@@ -115,6 +117,7 @@ impl Slicer {
             last_duration_s: None,
             camera: None,
             preview: None,
+            file_unit: None,
             next_id: 1,
         }
     }
@@ -141,8 +144,20 @@ impl Slicer {
     }
 
     /// Loads a model; returns the slice to run when auto re-slicing is on.
+    ///
+    /// A unit the model's file declares replaces the settings' unit. A later model without
+    /// one gets the unit from before back, unless it was changed in the meantime.
     pub fn set_model(&mut self, mesh: impl Into<Arc<Mesh>>, name: impl Into<String>, location: impl Into<String>) -> Option<SliceRequest> {
         let mesh = mesh.into();
+        // The user's own unit: the one before a file set it, while it is unchanged.
+        let own = match self.file_unit.take() {
+            Some((set, before)) if self.settings.unit == set => before,
+            _ => self.settings.unit,
+        };
+        self.settings.unit = mesh.unit.unwrap_or(own);
+        if let Some(unit) = mesh.unit {
+            self.file_unit = Some((unit, own));
+        }
         let bounds = mesh.bounds();
         let id = self.take_id();
         self.model = Some(Model { mesh, name: name.into(), location: location.into(), bounds, id });
@@ -316,6 +331,26 @@ mod tests {
         assert!(sl.poll(1.4).is_none());
         let req = sl.poll(1.6).expect("stable for the debounce time");
         assert_eq!(req.settings.yaw_deg, 20.0);
+    }
+
+    #[test]
+    fn unit_from_the_file() {
+        let mut sl = Slicer::new(SliceSettings { unit: ModelUnit::Inch, ..coarse() }, true);
+        sl.set_model(box_mesh([0.0; 3], [1.0, 1.0, 1.0]), "a.stl", "a.stl");
+        assert_eq!(sl.settings.unit, ModelUnit::Inch, "an STL keeps the setting");
+        let in_unit = |unit| Mesh { unit: Some(unit), ..box_mesh([0.0; 3], [1.0, 1.0, 1.0]) };
+        let req = sl.set_model(in_unit(ModelUnit::Cm), "a.3mf", "a.3mf").unwrap();
+        assert_eq!((sl.settings.unit, req.settings.unit), (ModelUnit::Cm, ModelUnit::Cm));
+        sl.set_model(in_unit(ModelUnit::M), "a.glb", "a.glb");
+        assert_eq!(sl.settings.unit, ModelUnit::M);
+        sl.set_model(box_mesh([0.0; 3], [1.0, 1.0, 1.0]), "b.stl", "b.stl");
+        assert_eq!(sl.settings.unit, ModelUnit::Inch, "back to the user's unit");
+
+        // A unit chosen after a file set one is the user's.
+        sl.set_model(in_unit(ModelUnit::M), "a.glb", "a.glb");
+        sl.settings.unit = ModelUnit::Cm;
+        sl.set_model(box_mesh([0.0; 3], [1.0, 1.0, 1.0]), "b.stl", "b.stl");
+        assert_eq!(sl.settings.unit, ModelUnit::Cm);
     }
 
     #[test]

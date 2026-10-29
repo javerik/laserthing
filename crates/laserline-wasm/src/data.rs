@@ -1,14 +1,14 @@
 //! Meshes, scans and slicing.
 
 use crate::{from_js, js_err, to_js};
-use laserline_core::scan::{self, SliceObserver};
-use laserline_core::{mesh, scan_file, viz};
+use laserline_core::scan::{self, ModelUnit, SliceObserver};
+use laserline_core::{formats, mesh, scan_file, viz};
 use serde::{Deserialize, Serialize};
 use std::cell::Cell;
 use std::sync::Arc;
 use wasm_bindgen::prelude::*;
 
-/// A parsed STL model.
+/// A parsed 3D model.
 #[wasm_bindgen]
 #[derive(Clone)]
 pub struct Mesh {
@@ -23,10 +23,43 @@ pub(crate) struct Bounds {
 
 #[wasm_bindgen]
 impl Mesh {
+    /// Parses a model file: STL, 3MF, OBJ, PLY, glTF (embedded buffers), GLB or STEP, by
+    /// the extension of `fileName` or, failing that, by its content (see
+    /// `constants().modelExtensions`). Errors start with the format's name.
+    pub fn parse(bytes: &[u8], #[wasm_bindgen(js_name = fileName)] file_name: &str) -> Result<Mesh, JsError> {
+        formats::parse_model(bytes, file_name).map(|m| Mesh { inner: Arc::new(m) }).map_err(js_err)
+    }
+
     /// Parses a binary or ASCII STL file.
     #[wasm_bindgen(js_name = parseStl)]
     pub fn parse_stl(bytes: &[u8]) -> Result<Mesh, JsError> {
         mesh::parse_stl(bytes).map(|m| Mesh { inner: Arc::new(m) }).map_err(js_err)
+    }
+
+    /// A mesh from the arrays `vertices()` and `triangles()` return, e.g. of a mesh parsed
+    /// in a worker, and the unit its file declared.
+    #[wasm_bindgen(js_name = fromArrays)]
+    pub fn from_arrays(vertices: &[f32], triangles: &[u32], #[wasm_bindgen(unchecked_param_type = "ModelUnit | undefined")] unit: JsValue) -> Result<Mesh, JsError> {
+        if !vertices.len().is_multiple_of(3) || !triangles.len().is_multiple_of(3) {
+            return Err(JsError::new("vertices and triangles must hold triples"));
+        }
+        if triangles.iter().any(|&i| i as usize >= vertices.len() / 3) {
+            return Err(JsError::new("triangle index out of range"));
+        }
+        let unit: Option<ModelUnit> = from_js(unit)?;
+        let inner = mesh::Mesh {
+            vertices: vertices.chunks_exact(3).map(|v| [v[0], v[1], v[2]]).collect(),
+            triangles: triangles.chunks_exact(3).map(|t| [t[0], t[1], t[2]]).collect(),
+            unit,
+        };
+        Ok(Mesh { inner: Arc::new(inner) })
+    }
+
+    /// Unit the model's file declares (3MF, glTF, STEP); loading the mesh into a
+    /// `Slicer` makes it the settings' unit.
+    #[wasm_bindgen(getter, unchecked_return_type = "ModelUnit | undefined")]
+    pub fn unit(&self) -> JsValue {
+        self.inner.unit.map_or(JsValue::UNDEFINED, |u| to_js(&u))
     }
 
     /// Number of triangles.

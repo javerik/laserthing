@@ -1,6 +1,6 @@
 # @javerik/laserline
 
-Laser line emulator and laser-triangulation STL slicer for the browser, compiled from
+Laser line emulator and laser-triangulation slicer of 3D models for the browser, compiled from
 Rust to WebAssembly. Renders with WebGPU where available and WebGL2 otherwise.
 
 ```ts
@@ -46,7 +46,7 @@ For other views in other windows, `openPopup()` opens an empty same-origin windo
 `CanvasBridge` shows frames of a view created with `createOffscreen(bridge.offscreen)` on
 a canvas there (call `bridge.present()` after each render).
 
-Slicing STL models runs in a Web Worker:
+Parsing model files and slicing run in a Web Worker:
 
 ```ts
 // slice.worker.ts
@@ -59,7 +59,8 @@ import { SliceRunner, SliceWorkerClient, Slicer } from '@javerik/laserline';
 
 const client = new SliceWorkerClient(() => new Worker(new URL('./slice.worker', import.meta.url), { type: 'module' }));
 const runner = new SliceRunner(new Slicer(undefined, true), client, (scan) => emulator.setScan(scan));
-runner.loadModel(stlBytes, 'part.stl');
+// STL, 3MF, OBJ, PLY, glTF (embedded buffers), GLB or STEP; `MODEL_ACCEPT` for <input accept>.
+const { triangles, unit } = await runner.loadModel(fileBytes, 'part.step');
 // every frame: runner.poll(performance.now() / 1000)
 ```
 
@@ -78,7 +79,7 @@ preset JSON files.
 | `LaserView`, `MeshView` | Render an `Emulator` / a `Slicer` scene on a canvas or `OffscreenCanvas` |
 | `AnimationLoop` | `requestAnimationFrame` loop with clamped `dt`, switchable between windows |
 | `DetachedLaserView`, `openPopup`, `CanvasBridge` | Views in windows of their own |
-| `Mesh` | STL parsing, geometry (`vertices`, `triangles`, `bounds`) |
+| `Mesh` | Model parsing (`parse`, `fromArrays`), geometry (`vertices`, `triangles`, `bounds`), declared `unit` |
 | `slice`, `toScanFrame`, `gridSize` | Slice a mesh (with progress and cancellation); scan-frame geometry; grid preview |
 | `Scan` | `.lscan` I/O, metadata, heights and visibility per row or whole, profile runs, range image |
 | `Slicer` | Model, settings, debounced re-slicing, 3D camera |

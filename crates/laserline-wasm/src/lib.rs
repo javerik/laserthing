@@ -74,6 +74,8 @@ export interface Constants {
   scanExtension: string;
   /** `.lscan` format version this build reads and writes. */
   scanVersion: number;
+  /** Extensions of the model files `Mesh.parse` reads (lower case, without the dot). */
+  modelExtensions: string[];
   /** Longest side in px of `Scan.rangeImage()`. */
   rangeImageMax: number;
 }
@@ -95,13 +97,14 @@ struct Constants {
     fwhm_per_sigma: f32,
     scan_extension: &'static str,
     scan_version: u16,
+    model_extensions: &'static [&'static str],
     range_image_max: usize,
 }
 
 /// Fixed limits and format constants.
 #[wasm_bindgen(unchecked_return_type = "Constants")]
 pub fn constants() -> JsValue {
-    use laserline_core::{model, scan, scan_file, slicer, viz};
+    use laserline_core::{formats, model, scan, scan_file, slicer, viz};
     to_js(&Constants {
         max_cols: scan::MAX_COLS,
         max_rows: scan::MAX_ROWS,
@@ -110,6 +113,7 @@ pub fn constants() -> JsValue {
         fwhm_per_sigma: model::FWHM_PER_SIGMA,
         scan_extension: scan_file::EXTENSION,
         scan_version: scan_file::VERSION,
+        model_extensions: formats::EXTENSIONS,
         range_image_max: viz::RANGE_IMAGE_MAX,
     })
 }

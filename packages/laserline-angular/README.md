@@ -1,7 +1,7 @@
 # @javerik/laserline-angular
 
 Angular 21 components for the laserline emulator: the live laser view, the full control
-panel and the STL slicer with 3D preview, built on
+panel and the slicer of 3D models (STL, 3MF, OBJ, PLY, glTF, STEP) with 3D preview, built on
 [`@javerik/laserline`](https://www.npmjs.com/package/@javerik/laserline).
 
 ## Setup

@@ -1,5 +1,5 @@
 import { ChangeDetectionStrategy, Component, computed, inject, input, model } from '@angular/core';
-import type { FullSliceSettings } from '@javerik/laserline';
+import { type FullSliceSettings, MODEL_ACCEPT } from '@javerik/laserline';
 import { LlProfileStepper, LlScanSummary } from './panels';
 import { LaserlineStore } from './store';
 import { LlMeshView, LlProfilePlot, LlRangeImage } from './views';
@@ -138,7 +138,7 @@ export class LlSliceSettings {
   }
 }
 
-/** The object slicer: STL import, settings and progress on the left, previews on the right. */
+/** The object slicer: model import, settings and progress on the left, previews on the right. */
 @Component({
   selector: 'll-slicer',
   imports: [LlSliceSettings, LlFileButton, LlMeshView, LlRangeImage, LlProfilePlot, LlProfileStepper, LlScanSummary],
@@ -149,7 +149,7 @@ export class LlSliceSettings {
       <aside>
         <div class="head">
           <h2>Object</h2>
-          <ll-file-button accept=".stl" [disabled]="!store.canSlice" (file)="store.importStl($event)">📂 Import STL…</ll-file-button>
+          <ll-file-button [accept]="modelAccept" [disabled]="!store.canSlice" (file)="store.importModel($event)">📂 Import model…</ll-file-button>
         </div>
         @if (sl.model; as m) {
           <strong [title]="m.location">{{ m.name }}</strong>
@@ -160,7 +160,7 @@ export class LlSliceSettings {
         } @else if (store.scan()) {
           <span class="weak">Playing a loaded scan; its settings are shown below. Import the model to re-slice.</span>
         } @else {
-          <span class="weak">No model loaded. Import an STL file to slice it.</span>
+          <span class="weak">No model loaded. Import a 3D model (STL, 3MF, OBJ, PLY, glTF, STEP) to slice it.</span>
         }
         <ll-slice-settings
           [value]="store.sliceSettings()"
@@ -231,4 +231,5 @@ export class LlSliceSettings {
 })
 export class LlSlicer {
   protected readonly store = inject(LaserlineStore);
+  protected readonly modelAccept = MODEL_ACCEPT;
 }

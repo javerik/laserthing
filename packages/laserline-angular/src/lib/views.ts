@@ -234,7 +234,7 @@ export class LlLaserView {
     @if (error(); as e) {
       <div class="empty error">{{ e }}</div>
     } @else if (labels().length === 0) {
-      <div class="empty">Import an STL model to start</div>
+      <div class="empty">Import a 3D model to start</div>
     }
     <div class="help">drag: orbit · right/shift-drag: pan · wheel: zoom · double-click: reset</div>
   `,

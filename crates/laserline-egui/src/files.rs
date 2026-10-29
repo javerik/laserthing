@@ -1,11 +1,13 @@
 //! File access the UI needs, provided by the host application, so the UI itself never
 //! touches the file system or a dialog library.
 
+use laserline_core::formats;
+
 /// The kinds of files the UI opens and saves.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FileKind {
-    /// STL model (`.stl`), open only.
-    Stl,
+    /// 3D model (STL, 3MF, OBJ, PLY, glTF, STEP; `laserline_core::formats`), open only.
+    Model,
     /// Sliced scan (`.lscan`).
     Scan,
     /// Laser parameters as JSON (`.json`).
@@ -13,12 +15,13 @@ pub enum FileKind {
 }
 
 impl FileKind {
-    /// Filter name and extensions for file dialogs.
-    pub fn filter(self) -> (&'static str, &'static [&'static str]) {
+    /// Filter name and extensions for file dialogs (model extensions in both cases, for
+    /// case-sensitive file systems).
+    pub fn filter(self) -> (&'static str, Vec<String>) {
         match self {
-            FileKind::Stl => ("STL model", &["stl", "STL"]),
-            FileKind::Scan => ("Laser scan", &["lscan"]),
-            FileKind::Preset => ("Laser preset", &["json"]),
+            FileKind::Model => ("3D model", formats::EXTENSIONS.iter().flat_map(|e| [e.to_string(), e.to_ascii_uppercase()]).collect()),
+            FileKind::Scan => ("Laser scan", vec!["lscan".into()]),
+            FileKind::Preset => ("Laser preset", vec!["json".into()]),
         }
     }
 }

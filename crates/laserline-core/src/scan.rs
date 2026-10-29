@@ -645,6 +645,7 @@ mod tests {
         let mesh = Mesh {
             vertices: vec![[0.0, 0.0, 0.0], [10.0, 0.0, 0.0], [10.0, 10.0, 10.0], [0.0, 10.0, 10.0]],
             triangles: vec![[0, 1, 2], [0, 2, 3]],
+            unit: None,
         };
         let s = SliceSettings { margin_lateral_mm: 0.0, margin_travel_mm: 0.0, ..flat(SliceSettings::default()) };
         let scan = run(&mesh, &s);

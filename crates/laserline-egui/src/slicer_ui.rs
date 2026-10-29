@@ -1,4 +1,4 @@
-//! Object slicer UI: STL import, slice settings, slicing progress and the previews
+//! Object slicer UI: model import, slice settings, slicing progress and the previews
 //! (3D view, range image, current profile).
 
 use crate::files::FileHost;
@@ -60,8 +60,8 @@ impl LaserUi {
         ui.horizontal(|ui| {
             ui.heading("Object");
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if ui.button("📂 Import STL…").clicked() {
-                    self.import_stl(files);
+                if ui.button("📂 Import model…").clicked() {
+                    self.import_model(files);
                 }
             });
         });
@@ -85,7 +85,7 @@ impl LaserUi {
                 ui.label(RichText::new("Playing a loaded scan; its settings are shown below. Import the model to re-slice.").weak());
             }
             None => {
-                ui.label(RichText::new("No model loaded. Import an STL file to slice it.").weak());
+                ui.label(RichText::new("No model loaded. Import a 3D model (STL, 3MF, OBJ, PLY, glTF, STEP) to slice it.").weak());
             }
         }
         ui.separator();
@@ -173,7 +173,7 @@ impl LaserUi {
         }
         let Some(view) = self.slicer.view_3d(scan, row, reset) else {
             painter.rect_filled(rect, 0.0, Color32::from_gray(18));
-            painter.text(rect.center(), egui::Align2::CENTER_CENTER, "Import an STL model to start", egui::FontId::proportional(18.0), Color32::from_gray(140));
+            painter.text(rect.center(), egui::Align2::CENTER_CENTER, "Import a 3D model to start", egui::FontId::proportional(18.0), Color32::from_gray(140));
             return;
         };
         let ppp = ui.ctx().pixels_per_point();
@@ -420,7 +420,7 @@ fn up_label(a: UpAxis) -> &'static str {
     }
 }
 
-fn unit_label(u: ModelUnit) -> &'static str {
+pub(crate) fn unit_label(u: ModelUnit) -> &'static str {
     match u {
         ModelUnit::Mm => "mm",
         ModelUnit::Cm => "cm",

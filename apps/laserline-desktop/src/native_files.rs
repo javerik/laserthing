@@ -14,7 +14,7 @@ pub fn read(path: &Path) -> Result<OpenedFile, String> {
 
 fn dialog(kind: FileKind) -> rfd::FileDialog {
     let (name, extensions) = kind.filter();
-    rfd::FileDialog::new().add_filter(name, extensions)
+    rfd::FileDialog::new().add_filter(name, &extensions)
 }
 
 impl FileHost for NativeFiles {

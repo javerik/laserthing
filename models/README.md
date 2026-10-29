@@ -25,3 +25,16 @@ What to measure on the scan:
 
 Handedness: seen from above with the travel pointing away, the upright runs along the left edge
 (low u) and the slab along the near edge (low v). A mirrored scan shows the upright on the right.
+
+### In the other formats
+
+The same object in every format the slicer reads (`crates/laserline-core/tests/model_files.rs`
+checks that they slice alike):
+
+| File | Made by | Unit |
+|---|---|---|
+| `l-block.stl` | by hand | none (mm) |
+| `l-block.obj`, `l-block.ply` (binary) | from the STL | none (mm) |
+| `l-block.glb` | from the STL, z up as the STL | metres, as glTF requires |
+| `l-block.3mf` | Bambu Studio (`--export-3mf`, arrange and orient off): object in `3D/Objects/`, placed by a component | mm |
+| `l-block.step` | truck-stepio, two solids: the L-shaped layer z 0…6 and the upright above it | mm |
