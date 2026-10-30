@@ -1,4 +1,5 @@
-// Laser line fragment shader. Every pixel is evaluated analytically:
+// Laser line fragment shader (mirrored on the CPU in `laserline_core::cpu`).
+// Every pixel is evaluated analytically:
 // pixel -> line space (along/across) -> deformation (+ visibility) -> cross-section profile
 // -> end caps -> speckle -> ambient + sensor noise.
 

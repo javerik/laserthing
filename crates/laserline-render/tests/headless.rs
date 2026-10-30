@@ -196,3 +196,87 @@ fn mesh_view_draws_the_model() {
         assert!(red(&px, 1, 1) < 30, "{}: background", gpu.name);
     }
 }
+
+#[test]
+fn cpu_matches_gpu_across_presets_and_scan() {
+    use laserline_core::cpu;
+    use laserline_core::presets;
+
+    let m = mesh::box_mesh([0.0; 3], [40.0, 10.0, 20.0]);
+    let s = scan::SliceSettings { lateral_res_mm: 0.5, travel_step_mm: 1.0, margin_lateral_mm: 30.0, occlusion: true, ..Default::default() };
+    let scan = scan::slice(&m, &s, "", &AtomicBool::new(false), &scan::Progress::new(0)).unwrap();
+
+    let mut cases: Vec<(String, Emulator)> = presets::builtin()
+        .into_iter()
+        .map(|(name, p)| {
+            let mut e = Emulator::new(p);
+            e.tick(0.15);
+            (name.to_string(), e)
+        })
+        .collect();
+
+    // Add a top-hat profile and a scan-driven profile with speckle + noise.
+    let mut tophat = Emulator::default();
+    tophat.params.profile.kind = ProfileKind::TopHat;
+    tophat.params.profile.edge_softness_px = 3.0;
+    tophat.params.line.width_px = 10.0;
+    tophat.params.line.tilt_deg = 12.0;
+    cases.push(("Top-hat tilted".into(), tophat));
+
+    let mut scanned = Emulator::default();
+    scanned.params.scan.enabled = true;
+    scanned.params.scan.scale = laserline_core::params::ScanScale::Fixed;
+    scanned.params.scan.px_per_mm = 1.5;
+    scanned.params.noise.ambient_pct = 5.0;
+    scanned.params.noise.speckle_pct = 40.0;
+    scanned.params.noise.noise_pct = 2.0;
+    scanned.set_scan(scan);
+    scanned.seek_row(12);
+    cases.push(("Scan + speckle + noise".into(), scanned));
+
+    for gpu in gpus() {
+        let mut cpu_gray = vec![0u8; (W * H) as usize];
+        for (name, emu) in &cases {
+            let gpu_rgba = line(&gpu, emu);
+            let frame = emu.frame([0.0, 0.0], [W as f32, H as f32], false);
+            cpu::render_gray8(&frame, W, H, &mut cpu_gray);
+
+            // Compare the brightest RGB channel of the GPU output with `render_gray8`,
+            // and also compare all 3 RGB channels against `eval_pixel_rgb`.
+            let mut abs_diff_gray = 0u64;
+            let mut max_diff_gray = 0u8;
+            let mut abs_diff_rgb = 0u64;
+            for y in 0..H {
+                for x in 0..W {
+                    let idx = (y * W + x) as usize;
+                    let g_rgb = [gpu_rgba[idx * 4], gpu_rgba[idx * 4 + 1], gpu_rgba[idx * 4 + 2]];
+                    let g_max = g_rgb[0].max(g_rgb[1]).max(g_rgb[2]);
+                    let c_gray = cpu_gray[idx];
+                    let dg = g_max.abs_diff(c_gray);
+                    abs_diff_gray += dg as u64;
+                    max_diff_gray = max_diff_gray.max(dg);
+
+                    let c_rgb = cpu::eval_pixel_rgb(&frame.uniforms, frame.deform.as_deref(), x as f32 + 0.5, y as f32 + 0.5)
+                        .map(|v| (v * 255.0).round() as u8);
+                    for ch in 0..3 {
+                        abs_diff_rgb += g_rgb[ch].abs_diff(c_rgb[ch]) as u64;
+                    }
+                }
+            }
+            let n = (W * H) as f64;
+            let mae_gray = abs_diff_gray as f64 / n;
+            let mae_rgb = abs_diff_rgb as f64 / (n * 3.0);
+            eprintln!("{} | {}: gray MAE = {mae_gray:.4} (max {max_diff_gray}), rgb MAE = {mae_rgb:.4}", gpu.name, name);
+            assert!(
+                mae_gray <= 0.5,
+                "{} ({name}): gray mean absolute error {mae_gray:.4} exceeds 0.5 / 255 (max diff {max_diff_gray})",
+                gpu.name
+            );
+            assert!(
+                mae_rgb <= 0.5,
+                "{} ({name}): rgb mean absolute error {mae_rgb:.4} exceeds 0.5 / 255",
+                gpu.name
+            );
+        }
+    }
+}
