@@ -3,6 +3,11 @@
 ## Unreleased
 
 ### Added
+- A controller can reset the line length: `reset-length` (answered with
+  `length-reset { length, length_unit }`) sets the user's line to the view's full length
+  (100 %), applied when a running session ends; a limit still applies. Meant for the start of
+  a calibration, since `fit-to-field` and `constrain` only ever shorten the line
+  (rustcamserve#62). JS: `RemoteTarget.resetLength`, `LaserlineStore.resetLength()`.
 - CPU renderer for the 2D laser line in `laserline_core::cpu` (`render_gray`, `render_gray8`,
   `render_gray_region`, `render_gray8_region`, `eval_pixel_gray`, `eval_pixel_rgb`), matching
   `laserline-render`'s `laser.wgsl` shader (intensity, width, Gaussian/top-hat/hard profile,

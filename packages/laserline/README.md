@@ -109,6 +109,7 @@ view's drawing buffer, y down).
 | `fit-to-field { to, id, margin }` | `fitted { id, fits }` after moving and shrinking the line into the field |
 | `constrain { to, id, polygon, label? }` | `constrained { id, clamped }`; from now on the line, its motion, deformation and scan heights stay inside the convex polygon (`clamped` names what the current parameters gave up); `null` releases it |
 | `tilt { to, id, tilt_deg }` | `tilted { id, tilt_deg }` with the tilt kept (clamped to ±45°) after setting it as the user's line tilt; during a session it applies when the session ends |
+| `reset-length { to, id }` | `length-reset { id, length, length_unit }` with the length kept (a limit may shorten it) after setting the user's line to the view's full length (100 %); during a session it applies when the session ends. Send it before a calibration: `fit-to-field` and `constrain` only ever shorten the line |
 
 The live view must stay visible: hidden windows get no animation frames, so no `shown`.
 

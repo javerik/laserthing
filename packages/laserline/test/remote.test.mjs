@@ -22,6 +22,10 @@ function fakeTarget() {
       calls.push(['tilt', deg]);
       return this.tilt;
     },
+    resetLength() {
+      calls.push('reset-length');
+      return { length: 100, length_unit: 'Percent' };
+    },
     begin: () => calls.push('begin'),
     end: () => calls.push('end'),
     show(pattern, rendered) {
@@ -174,6 +178,16 @@ test('setting the line tilt', async () => {
   c.send({ type: 'tilt', to: h.id, id: 4, tilt_deg: 60 });
   assert.equal((await c.next('tilted')).tilt_deg, 45);
   assert.deepEqual(target.calls, [['tilt', 1.25], ['tilt', 60]]);
+});
+
+test('resetting the line length', async () => {
+  const name = 'remote-test-length';
+  const target = fakeTarget();
+  const h = host(target, { channel: name });
+  const c = controller(name);
+  c.send({ type: 'reset-length', to: h.id, id: 5 });
+  assert.deepEqual(await c.next('length-reset'), { v: 1, type: 'length-reset', host: h.id, id: 5, length: 100, length_unit: 'Percent' });
+  assert.deepEqual(target.calls, ['reset-length']);
 });
 
 test('the metric mapping passes through, and a new revision is sent', async () => {

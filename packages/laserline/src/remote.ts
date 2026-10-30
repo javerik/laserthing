@@ -1,4 +1,4 @@
-import type { Envelope, MetricMapping } from '../wasm/laserline.js';
+import type { Envelope, LengthUnit, MetricMapping } from '../wasm/laserline.js';
 import type { RemotePattern } from './pattern.js';
 
 /** Default `BroadcastChannel` name of the remote protocol. */
@@ -55,7 +55,8 @@ export type ToLaserline =
   | { v: 1; type: 'camera-field'; to: string; polygon: ViewPoint[] | null; label?: string }
   | { v: 1; type: 'fit-to-field'; to: string; id: number; margin: number }
   | { v: 1; type: 'constrain'; to: string; id: number; polygon: ViewPoint[] | null; label?: string }
-  | { v: 1; type: 'tilt'; to: string; id: number; tilt_deg: number };
+  | { v: 1; type: 'tilt'; to: string; id: number; tilt_deg: number }
+  | { v: 1; type: 'reset-length'; to: string; id: number };
 
 /** Messages from a laserline window; `host` identifies it. */
 export type FromLaserline =
@@ -64,6 +65,7 @@ export type FromLaserline =
   | { v: 1; type: 'fitted'; host: string; id: number; fits: boolean }
   | { v: 1; type: 'constrained'; host: string; id: number; clamped: string[] }
   | { v: 1; type: 'tilted'; host: string; id: number; tilt_deg: number }
+  | { v: 1; type: 'length-reset'; host: string; id: number; length: number; length_unit: LengthUnit }
   | { v: 1; type: 'error'; host: string; session?: string; id?: number; message: string };
 
 /** What a {@link RemoteHost} drives: the emulator and its view, e.g. `LaserlineStore`. */
@@ -87,6 +89,8 @@ export interface RemoteTarget {
   constrain(polygon: ViewPoint[] | null, label: string | null): string[];
   /** Set the user's line tilt (degrees, clamped to ±45); returns the tilt kept. */
   setTilt(deg: number): number;
+  /** Set the user's line to the view's full length; returns the length kept (a limit may shorten it). */
+  resetLength(): { length: number; length_unit: LengthUnit };
 }
 
 /** Options of {@link RemoteHost}. */
@@ -113,6 +117,9 @@ export interface RemoteHostOptions {
  * 7. `tilt` → the window sets the user's line tilt (applied when a running session ends),
  *    answering `tilted` with the tilt kept. A `line` pattern takes its own `tilt_deg`, so a
  *    controller can find the tilt at which the camera sees the line level.
+ * 8. `reset-length` → the window sets the user's line to the view's full length (100 %, applied
+ *    when a running session ends), answering `length-reset` with the length kept. A controller
+ *    sends it before a calibration, since `fit-to-field` and `constrain` only ever shorten it.
  *
  * Every status carries the line's `metric` mapping (view px per mm of the scan, the base
  * line, the travel speed), so a controller can turn what its camera measures into mm.
@@ -222,6 +229,12 @@ export class RemoteHost {
       case 'tilt': {
         const tilt_deg = this.target.setTilt(msg.tilt_deg);
         this.post({ v: 1, type: 'tilted', host: this.id, id: msg.id, tilt_deg });
+        this.postStatus();
+        break;
+      }
+      case 'reset-length': {
+        const kept = this.target.resetLength();
+        this.post({ v: 1, type: 'length-reset', host: this.id, id: msg.id, ...kept });
         this.postStatus();
         break;
       }
