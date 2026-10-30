@@ -444,6 +444,30 @@ describe('LaserlineStore windows', () => {
       s.ngOnDestroy();
     });
 
+    it('resets the user\'s line to the full length, kept by a limit and applied after a session', async () => {
+      const { s, step, send, next, until, rendered } = await remoteStore('spec-remote-length');
+      step();
+      send({ type: 'hello' });
+      const host = (await next('status')).host;
+      s.patchParams({ line: { ...s.params().line, length: 300, length_unit: 'Pixels' } });
+      send({ type: 'begin', to: host, session: 'cal' });
+      await until(() => s.calibrating());
+      send({ type: 'reset-length', to: host, id: 1 });
+      expect(await next('length-reset')).toMatchObject({ id: 1, length: 100, length_unit: 'Percent' });
+      expect(s.params().line).toMatchObject({ length: 100, length_unit: 'Percent' });
+      send({ type: 'end', to: host, session: 'cal' });
+      await until(() => !s.calibrating());
+      step();
+      expect((rendered.at(-1) as ReturnType<typeof s.params>).line.length).toBe(100);
+      // A limit still shortens it, and the answer says so.
+      s.setConstraint([[400, 100], [700, 100], [700, 300], [400, 300]]);
+      send({ type: 'reset-length', to: host, id: 2 });
+      const kept = await next('length-reset');
+      expect(kept.length).toBeLessThan(100);
+      expect(kept.length).toBeCloseTo(s.params().line.length, 3);
+      s.ngOnDestroy();
+    });
+
     it('keeps the camera field and fits the line into it', async () => {
       const { s, step, send, next, until } = await remoteStore('spec-remote-3');
       step();

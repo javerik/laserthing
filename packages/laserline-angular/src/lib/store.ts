@@ -9,6 +9,7 @@ import {
   type FullSliceSettings,
   type GridInfo,
   type LaserView,
+  type LengthUnit,
   type MeshView,
   type ModelInfo,
   type OverlayPattern,
@@ -303,6 +304,7 @@ export class LaserlineStore implements OnDestroy {
           fitToField: (margin) => (this.cameraField() ? this.fitToCameraField(margin) : undefined),
           constrain: (polygon, label) => this.setConstraint(polygon, label),
           setTilt: (deg) => this.setTilt(deg),
+          resetLength: () => this.resetLength(),
         },
         this.config.remote === true ? {} : this.config.remote,
       );
@@ -890,6 +892,18 @@ export class LaserlineStore implements OnDestroy {
     this.setParams({ ...p, line: { ...p.line, tilt_deg: tilt } });
     this.setStatus(`Tilt set to ${tilt.toFixed(2)}°`);
     return this.params().line.tilt_deg;
+  }
+
+  /**
+   * Sets the line to the view's full length (100 %) and returns the length kept, which a limit
+   * may have shortened. During a calibration it applies when that ends.
+   */
+  resetLength(): { length: number; length_unit: LengthUnit } {
+    const p = this.params();
+    this.setParams({ ...p, line: { ...p.line, length: 100, length_unit: 'Percent' } });
+    this.setStatus('Line length reset to the full view');
+    const { length, length_unit } = this.params().line;
+    return { length, length_unit };
   }
 
   /** `params` adjusted to keep the line inside `constraint`; as they are without one or before the view has a size. */
