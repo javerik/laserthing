@@ -3,6 +3,11 @@
 ## Unreleased
 
 ### Added
+- CPU renderer for the 2D laser line in `laserline_core::cpu` (`render_gray`, `render_gray8`,
+  `render_gray_region`, `render_gray8_region`, `eval_pixel_gray`, `eval_pixel_rgb`), matching
+  `laserline-render`'s `laser.wgsl` shader (intensity, width, Gaussian/top-hat/hard profile,
+  deformation, speckle, ambient light and sensor noise, with colour/wavelength reduced to
+  intensity) for headless consumers.
 - The slicer imports 3MF, OBJ, PLY (ASCII and binary), glTF/GLB and STEP (`.step`/`.stp`)
   besides STL, natively and in the browser (button and drop). 3MF reads components and
   Bambu Studio / PrusaSlicer packages (`p:path`); glTF needs embedded buffers. STEP is

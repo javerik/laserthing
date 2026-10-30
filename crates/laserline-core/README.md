@@ -21,6 +21,7 @@ let heights_mm = scan.row_height(0); // NaN where the laser hits nothing
 
 - `params`, `model`, `presets`: line parameters (serde) and the laser model.
 - `emulator::Emulator`: simulation clock, scan playback and per-frame shader uniforms.
+- `cpu`: CPU renderer (`render_gray`, `render_gray8`) matching the wgpu line shader, for headless cameras.
 - `formats`: model files (STL, 3MF, OBJ, PLY, glTF/GLB, STEP) into a `mesh::Mesh`.
 - `mesh`, `scan`, `scan_file`: meshes, slicing (threaded natively), `.lscan` files.
 - `slicer::Slicer`: interactive slicer state (debounced re-slicing, previews).
