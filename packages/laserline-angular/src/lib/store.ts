@@ -14,11 +14,14 @@ import {
   type ModelInfo,
   type OverlayPattern,
   type Preset,
+  type RemoteControls,
   type RemotePattern,
   RemoteHost,
   type RemoteMetric,
+  type RemoteScreen,
   type RemoteStatus,
   Scan,
+  type ScreenLike,
   SliceRunner,
   SliceWorkerClient,
   Slicer,
@@ -29,15 +32,18 @@ import {
   constants,
   defaultParams,
   defaultSliceSettings,
+  describeScreen,
   downloadBytes,
   init,
   isModelFile,
   isOverlayPattern,
   openPopup,
   patternParams,
+  pickScreen,
   presetFromJson,
   presetToJson,
   readFileBytes,
+  requestFullscreenOn,
 } from '@javerik/laserline';
 import { LASERLINE_CONFIG } from './config';
 
@@ -55,6 +61,11 @@ const MAX_TILT_DEG = 45;
 const FIT_MARGIN_PX = 8;
 /** In `per_frame` playback the metric's row rate follows the frame rate only when it moves by more than this share. */
 const METRIC_FPS_HOLD = 0.01;
+
+/** `getScreenDetails()` of the Window Management API, as far as the store uses it. */
+interface ScreenDetailsLike {
+  readonly screens: readonly ScreenLike[];
+}
 
 /** Where the controls are shown; see {@link LaserlineStore.controls}. */
 export type ControlsPlacement = 'docked' | 'detached' | 'hidden';
@@ -167,6 +178,11 @@ export class LaserlineStore implements OnDestroy {
   readonly controls = signal<ControlsPlacement>('docked');
   /** The window the controls are shown in while `controls()` is `'detached'`. */
   readonly controlsWindow = signal<Window | undefined>(undefined);
+  /**
+   * The page shows only the live view (`enterViewOnly()`): no controls, no slicer, no
+   * window shortcuts; a click or double-click puts it fullscreen.
+   */
+  readonly viewOnly = signal(false);
   /** A slicing worker is configured. */
   readonly canSlice = !!this.config.createWorker;
   /** Other pages may drive the line (`LaserlineConfig.remote`). */
@@ -212,6 +228,12 @@ export class LaserlineStore implements OnDestroy {
   private metricText = '';
   /** Frame rate the metric uses as `per_frame` row rate, held while `fps` moves by under {@link METRIC_FPS_HOLD}. */
   private metricFps = 0;
+  /** The Window Management API's screens, once this origin may read them (`loadScreens`). */
+  private screenDetails?: ScreenDetailsLike;
+  /** The screen `enterViewOnly` was asked to go fullscreen on (index or label). */
+  private wantedScreen?: string;
+  /** Whether the slicer was open when a calibration began; it opens again when that ends. */
+  private slicerBeforeCalibration = false;
   private readonly syncWindows = () => {
     const popup = this.detached;
     // A hidden window gets no animation frames: follow one being looked at, preferring
@@ -220,6 +242,8 @@ export class LaserlineStore implements OnDestroy {
     const candidates = [popup?.visible ? popup.window : undefined, window, this.slicerWindow(), this.controlsWindow()];
     this.loop.setWindow(candidates.find(shown) ?? window);
     this.fullscreen.set(popup ? popup.fullscreen : !!document.fullscreenElement);
+    // Visibility and fullscreen are part of the status; a hidden window renders no frames.
+    this.remote?.postStatus();
   };
   private lastReadout = 0;
   private statusTimer?: ReturnType<typeof setTimeout>;
@@ -461,9 +485,79 @@ export class LaserlineStore implements OnDestroy {
    * page). Call it from a user action.
    */
   toggleFullscreen(): void {
-    if (this.detached) this.detached.toggleFullscreen();
+    if (this.detached) this.detached.toggleFullscreen(this.targetScreen());
     else if (document.fullscreenElement) void document.exitFullscreen();
-    else void document.documentElement.requestFullscreen().catch(() => undefined);
+    else void this.requestFullscreen();
+  }
+
+  /**
+   * Puts the window showing the live view fullscreen, on `screen` (a `ScreenDetailed`) or
+   * else on the screen `enterViewOnly` named, when known. Call it from a user action; resolves
+   * to whether it was asked for (the browser may still refuse a detached window).
+   */
+  requestFullscreen(screen?: ScreenLike): Promise<boolean> {
+    if (this.detached) {
+      if (!this.detached.fullscreen) this.detached.toggleFullscreen(screen ?? this.targetScreen());
+      return Promise.resolve(true);
+    }
+    if (document.fullscreenElement) return Promise.resolve(true);
+    return requestFullscreenOn(document, screen ?? this.targetScreen());
+  }
+
+  /**
+   * Shows only the live view in this page: the controls, the slicer and any other windows
+   * close, and the window shortcuts (except fullscreen) stop. For a page opened just to
+   * show the line, e.g. `?view=detached` in the web app. `screen` names the screen (index
+   * into `getScreenDetails().screens`, or its label) to go fullscreen on, where the Window
+   * Management API lets this origin read the screens.
+   */
+  enterViewOnly(screen?: string | null): void {
+    this.viewOnly.set(true);
+    this.wantedScreen = screen ?? undefined;
+    this.dockView();
+    this.closeControlsWindow();
+    this.controls.set('hidden');
+    this.slicerOpen.set(false);
+    this.dockSlicer();
+    void this.loadScreens(false);
+  }
+
+  /**
+   * The first click or double-click in a view-only page: enters fullscreen (on the wanted
+   * screen once its details are known). Returns false when it did nothing.
+   */
+  activateViewOnly(): boolean {
+    if (!this.viewOnly() || this.fullscreen()) return false;
+    if (this.wantedScreen !== undefined && !this.screenDetails && hasScreenDetails()) {
+      // Asks for the permission first; fullscreen follows if the click still counts.
+      void this.loadScreens(true).then(() => this.requestFullscreen());
+      return true;
+    }
+    void this.requestFullscreen();
+    return true;
+  }
+
+  /** The screen `enterViewOnly` named, if the screens are known and it is among them. */
+  private targetScreen(): ScreenLike | undefined {
+    return this.screenDetails ? pickScreen(this.screenDetails.screens, this.wantedScreen) : undefined;
+  }
+
+  /**
+   * Reads the screens through the Window Management API: without `prompt` only when this
+   * origin was already granted `window-management`.
+   */
+  private async loadScreens(prompt: boolean): Promise<void> {
+    if (this.screenDetails || !hasScreenDetails()) return;
+    try {
+      if (!prompt) {
+        const state = await navigator.permissions?.query({ name: 'window-management' as PermissionName });
+        if (state?.state !== 'granted') return;
+      }
+      this.screenDetails = await (window as unknown as WithScreenDetails).getScreenDetails();
+      this.remote?.postStatus();
+    } catch {
+      // Not supported or not allowed: the status carries the plain `window.screen`.
+    }
   }
 
   // ---- slicer window
@@ -586,6 +680,7 @@ export class LaserlineStore implements OnDestroy {
    */
   dispatch(action: Action): boolean {
     if (!this.ready()) return false;
+    if (this.viewOnly() && action !== 'toggleFullscreen' && action !== 'exitFullscreen') return false;
     switch (action) {
       case 'togglePlay':
         this.togglePlaying();
@@ -740,8 +835,10 @@ export class LaserlineStore implements OnDestroy {
   }
 
   /**
-   * Loads a 3D model into the slicer (parsed in the slicing worker) and opens it; errors
-   * go to `status`. A unit the file declares becomes the slice settings' unit.
+   * Loads a 3D model into the slicer (parsed in the slicing worker) and opens it, unless a
+   * camera application is linked (`remoteLinked`) or the page is view-only, since the
+   * slicer would cover the view; errors go to `status`. A unit the file declares becomes the
+   * slice settings' unit.
    */
   async importModel(file: File): Promise<void> {
     if (!this.runner) {
@@ -753,8 +850,13 @@ export class LaserlineStore implements OnDestroy {
       const { triangles, unit } = await this.runner.loadModel(await readFileBytes(file), file.name);
       this.sliceSettings.set(this.slicerCore!.settings as FullSliceSettings);
       this.schedulePersist();
-      this.slicerOpen.set(true);
-      this.setStatus(`Imported ${file.name} (${triangles} triangles${unit ? `, unit ${unit.toLowerCase()} from the file` : ''})`);
+      // The slicer would cover the view a linked camera application looks at.
+      const linked = this.calibrating() || this.remoteLinked;
+      if (!linked && !this.viewOnly()) this.slicerOpen.set(true);
+      this.setStatus(
+        `Imported ${file.name} (${triangles} triangles${unit ? `, unit ${unit.toLowerCase()} from the file` : ''})` +
+          (linked ? ' · slicer kept closed while a camera application is linked' : ''),
+      );
     } catch (e) {
       // Superseded by a newer import, which reports for itself.
       if (message(e) === constants().cancelled) return;
@@ -925,9 +1027,21 @@ export class LaserlineStore implements OnDestroy {
     this.syncOverlay();
   }
 
+  /**
+   * A camera application is linked (`RemoteHost.linked`): a calibration runs, or one sent
+   * this window a message within the idle time.
+   */
+  get remoteLinked(): boolean {
+    return !!this.remote?.linked;
+  }
+
   private remoteStatus(): Omit<RemoteStatus, 'session'> {
     const [w, h] = this.viewPx;
     const ready = !!this.emu && w > 0 && h > 0;
+    const popup = this.detached;
+    const controls: RemoteControls = this.viewOnly() ? 'none' : this.controls();
+    const screens = this.screenDetails?.screens;
+    const screen: RemoteScreen | null = popup ? popup.screen(screens) : describeScreen(window, screens);
     return {
       viewPx: [w, h],
       envelope: ready ? this.emu!.envelope(this.params(), w, h) : null,
@@ -935,6 +1049,11 @@ export class LaserlineStore implements OnDestroy {
       constraint: this.constraint() ?? null,
       tilt_deg: this.params().line.tilt_deg,
       metric: ready ? this.metric(w, h) : null,
+      visible: popup ? popup.visible : document.visibilityState === 'visible',
+      fullscreen: this.fullscreen(),
+      slicerOpen: this.slicerOpen(),
+      controls,
+      screen,
     };
   }
 
@@ -964,6 +1083,10 @@ export class LaserlineStore implements OnDestroy {
     this.calibrationBase = calibrationParams(this.params()) as FullLaserParams;
     emu.params = patternParams(this.calibrationBase, { kind: 'blank' }, 1, 1);
     emu.playing = false;
+    // The slicer covers the view (and its own window may sit on the filmed screen).
+    this.slicerBeforeCalibration = this.slicerOpen();
+    this.slicerOpen.set(false);
+    this.dockSlicer();
     this.syncOverlay();
   }
 
@@ -990,6 +1113,9 @@ export class LaserlineStore implements OnDestroy {
     this.detached?.setPattern(undefined);
     this.emu!.params = this.params();
     this.emu!.playing = this.playing();
+    // Back in the page: a window of its own can't be reopened without a user action.
+    if (this.slicerBeforeCalibration) this.slicerOpen.set(true);
+    this.slicerBeforeCalibration = false;
     this.syncOverlay();
   }
 
@@ -1030,6 +1156,15 @@ export class LaserlineStore implements OnDestroy {
       // Storage unavailable (private mode, quota): settings just do not persist.
     }
   }
+}
+
+interface WithScreenDetails {
+  getScreenDetails(): Promise<ScreenDetailsLike>;
+}
+
+/** The browser offers the Window Management API's `getScreenDetails`. */
+function hasScreenDetails(): boolean {
+  return typeof (window as unknown as Partial<WithScreenDetails>).getScreenDetails === 'function';
 }
 
 function message(e: unknown): string {

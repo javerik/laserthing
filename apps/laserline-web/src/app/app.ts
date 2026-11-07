@@ -8,6 +8,11 @@ import { LaserlineStore, LlControls, LlLaserView, LlSlicer, LlWindowPortal } fro
  * into a window of its own and docks it back), the controls are docked on the right
  * (D detaches them, H hides them) and the slicer opens over the view or in a window of
  * its own. Shortcuts and layout come from the library, as in the desktop app.
+ *
+ * `?view=detached` opens a controls-free page for a camera application to film: only the
+ * live view (and the remote host), fullscreen on the first click or double-click, on the
+ * screen `?screen=` names (index into `getScreenDetails().screens`, or its label) where the
+ * Window Management API lets this origin read the screens.
  */
 @Component({
   selector: 'app-root',
@@ -19,6 +24,11 @@ import { LaserlineStore, LlControls, LlLaserView, LlSlicer, LlWindowPortal } fro
     '(drop)': 'drop($event)',
   },
   template: `
+    @if (store.viewOnly()) {
+      <main class="hidden view-only" (click)="store.activateViewOnly()">
+        <ll-laser-view class="live" [detachable]="false" />
+      </main>
+    } @else {
     <main [class.hidden]="store.controls() !== 'docked'">
       <ll-laser-view class="live" (activate)="store.toggleFullscreen()" />
       @switch (store.controls()) {
@@ -83,11 +93,14 @@ import { LaserlineStore, LlControls, LlLaserView, LlSlicer, LlWindowPortal } fro
         </div>
       }
     </main>
+    }
   `,
   styles: `
     main { position: fixed; inset: 0; display: grid; grid-template-columns: minmax(0, 1fr) 380px; font-family: system-ui, sans-serif; color: #d9dce1; }
     main.hidden { grid-template-columns: 1fr; }
     .live { min-width: 0; min-height: 0; }
+    main.view-only { background: #000; }
+    :root:fullscreen main.view-only { cursor: none; }
     aside { overflow-y: auto; background: #15171a; border-left: 1px solid #31353b; padding: 8px 12px; }
     aside.window { position: fixed; inset: 0; border: 0; font-family: system-ui, sans-serif; color: #d9dce1; }
     header { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
@@ -113,6 +126,8 @@ export class App {
   private hintTimer?: ReturnType<typeof setTimeout>;
 
   constructor() {
+    const query = new URLSearchParams(location.search);
+    if (query.get('view') === 'detached') this.store.enterViewOnly(query.get('screen'));
     // Brief hint after hiding the controls, then a clean picture.
     effect(() => {
       const hidden = this.store.controls() === 'hidden';
@@ -130,6 +145,6 @@ export class App {
   protected drop(e: DragEvent): void {
     e.preventDefault();
     const file = e.dataTransfer?.files[0];
-    if (file && this.store.ready()) void this.store.openFile(file);
+    if (file && this.store.ready() && !this.store.viewOnly()) void this.store.openFile(file);
   }
 }

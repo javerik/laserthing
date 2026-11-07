@@ -15,7 +15,14 @@ import type { InitInput, LaserParams, LiveInfo, SliceSettings } from '../wasm/la
 
 export * from '../wasm/laserline.js';
 export { AnimationLoop, type FrameScheduler } from './loop.js';
-export { DetachedLaserView, type DetachedViewOptions } from './detached-view.js';
+export {
+  DetachedLaserView,
+  type DetachedViewOptions,
+  type ScreenLike,
+  describeScreen,
+  pickScreen,
+  requestFullscreenOn,
+} from './detached-view.js';
 export { CanvasBridge, openPopup, type PopupOptions } from './popup.js';
 export { MODEL_ACCEPT, MODEL_EXTENSIONS, downloadBytes, isModelFile, readFileBytes } from './files.js';
 export { SliceWorkerClient, type SliceResult } from './slice-client.js';
@@ -37,7 +44,9 @@ export {
   RemoteHost,
   type FromLaserline,
   type RemoteHostOptions,
+  type RemoteControls,
   type RemoteMetric,
+  type RemoteScreen,
   type RemoteStatus,
   type RemoteTarget,
   type ToLaserline,

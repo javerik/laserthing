@@ -22,6 +22,31 @@ export type RemoteMetric = MetricMapping & {
   rev: number;
 };
 
+/** Where the controls of a laserline window are: `none` in the controls-free view (`?view=detached`). */
+export type RemoteControls = 'docked' | 'detached' | 'hidden' | 'none';
+
+/**
+ * The screen the rendering window is on (CSS px of the virtual desktop). `label` and `index`
+ * (into `getScreenDetails().screens`) come from the Window Management API and are only
+ * present once this origin was granted `window-management`.
+ */
+export interface RemoteScreen {
+  /** Left edge on the virtual desktop. */
+  left: number;
+  /** Top edge on the virtual desktop. */
+  top: number;
+  /** Width of the screen. */
+  width: number;
+  /** Height of the screen. */
+  height: number;
+  /** The desktop spans more than one screen (`screen.isExtended`), if the browser says. */
+  isExtended?: boolean;
+  /** The screen's name, e.g. "DELL U2720Q" (Window Management API). */
+  label?: string;
+  /** Index into `getScreenDetails().screens` (Window Management API). */
+  index?: number;
+}
+
 /** What a laserline window reports about itself, see {@link RemoteHost}. */
 export interface RemoteStatus {
   /** Size of the live view in px; `[0, 0]` before its first frame. */
@@ -41,6 +66,20 @@ export interface RemoteStatus {
    * before the first frame. Missing from a laserline that can't publish it.
    */
   metric?: RemoteMetric | null;
+  /**
+   * The window rendering the live view (the detached one, or the page) is visible: not
+   * minimised, covered by another tab or hidden. Missing from an older laserline; this and the
+   * fields below are optional, so a controller written before them ignores them.
+   */
+  visible?: boolean;
+  /** The window rendering the live view is fullscreen. */
+  fullscreen?: boolean;
+  /** The Object Slicer is open (drawn over the view unless in a window of its own). */
+  slicerOpen?: boolean;
+  /** Where the controls are. */
+  controls?: RemoteControls;
+  /** The screen the window rendering the live view is on; `null` when unknown. */
+  screen?: RemoteScreen | null;
 }
 
 /**
@@ -66,7 +105,8 @@ export type FromLaserline =
   | { v: 1; type: 'constrained'; host: string; id: number; clamped: string[] }
   | { v: 1; type: 'tilted'; host: string; id: number; tilt_deg: number }
   | { v: 1; type: 'length-reset'; host: string; id: number; length: number; length_unit: LengthUnit }
-  | { v: 1; type: 'error'; host: string; session?: string; id?: number; message: string };
+  | { v: 1; type: 'error'; host: string; session?: string; id?: number; message: string }
+  | { v: 1; type: 'bye'; host: string };
 
 /** What a {@link RemoteHost} drives: the emulator and its view, e.g. `LaserlineStore`. */
 export interface RemoteTarget {
@@ -99,6 +139,12 @@ export interface RemoteHostOptions {
   channel?: string;
   /** See {@link REMOTE_IDLE_MS}. */
   idleMs?: number;
+  /**
+   * Where `pagehide`/`pageshow` are listened for (the page's `window` by default, when there
+   * is one): on `pagehide` the host ends a running session and says `bye`; on `pageshow` of a
+   * page restored from the back/forward cache it sends its status again.
+   */
+  page?: Pick<EventTarget, 'addEventListener' | 'removeEventListener'> | null;
 }
 
 /**
@@ -122,7 +168,11 @@ export interface RemoteHostOptions {
  *    sends it before a calibration, since `fit-to-field` and `constrain` only ever shorten it.
  *
  * Every status carries the line's `metric` mapping (view px per mm of the scan, the base
- * line, the travel speed), so a controller can turn what its camera measures into mm.
+ * line, the travel speed), so a controller can turn what its camera measures into mm, and
+ * what the window looks like: `visible`, `fullscreen`, `slicerOpen`, `controls`, `screen`.
+ *
+ * A window that closes (`pagehide`, or {@link RemoteHost.close}) sends `bye`, so a controller
+ * can tell a closed window from a hidden one.
  *
  * Only one session runs at a time; a second `begin` gets an `error`.
  */
@@ -136,6 +186,13 @@ export class RemoteHost {
   private idleTimer?: ReturnType<typeof setInterval>;
   private lastStatus = '';
   private closed = false;
+  /** When a controller last sent this window something (`hello` included); 0 = never. */
+  private lastSeen = 0;
+  private readonly page: Pick<EventTarget, 'addEventListener' | 'removeEventListener'> | null;
+  private readonly onPageHide = () => this.goodbye();
+  private readonly onPageShow = (e: Event) => {
+    if ((e as PageTransitionEvent).persisted) this.postStatus(true);
+  };
 
   /** Starts listening. */
   constructor(
@@ -145,11 +202,22 @@ export class RemoteHost {
     this.channel = new BroadcastChannel(options.channel ?? REMOTE_CHANNEL);
     this.idleMs = options.idleMs ?? REMOTE_IDLE_MS;
     this.channel.onmessage = (e: MessageEvent) => this.receive(e.data as ToLaserline);
+    this.page = options.page !== undefined ? options.page : defaultPage();
+    this.page?.addEventListener('pagehide', this.onPageHide);
+    this.page?.addEventListener('pageshow', this.onPageShow);
   }
 
   /** The session running now, if any. */
   get activeSession(): string | null {
     return this.session;
+  }
+
+  /**
+   * A controller is linked: a session runs, or a controller sent this window something
+   * (`hello` included) within the idle time ({@link REMOTE_IDLE_MS}).
+   */
+  get linked(): boolean {
+    return !this.closed && (this.session !== null || (this.lastSeen > 0 && Date.now() - this.lastSeen <= this.idleMs));
   }
 
   /** Sends the status if it changed since the last one sent, or always with `force`. */
@@ -162,22 +230,34 @@ export class RemoteHost {
     this.post({ v: REMOTE_VERSION, type: 'status', host: this.id, status });
   }
 
-  /** Stops listening; a running session ends. */
+  /** Stops listening; a running session ends and the window says `bye`. */
   close(): void {
     if (this.closed) return;
-    if (this.session) this.finish();
+    this.goodbye();
     this.closed = true;
+    this.page?.removeEventListener('pagehide', this.onPageHide);
+    this.page?.removeEventListener('pageshow', this.onPageShow);
     this.channel.close();
+  }
+
+  /** Ends a running session and sends `bye` (the window goes away, maybe into the back/forward cache). */
+  private goodbye(): void {
+    if (this.closed) return;
+    if (this.session) this.finish();
+    this.lastStatus = '';
+    this.post({ v: REMOTE_VERSION, type: 'bye', host: this.id });
   }
 
   private receive(msg: ToLaserline): void {
     if (this.closed || !msg || msg.v !== REMOTE_VERSION) return;
     if (msg.type === 'hello') {
+      this.lastSeen = Date.now();
       this.postStatus(true);
       return;
     }
     if (msg.to !== this.id) return;
     this.lastMessage = Date.now();
+    this.lastSeen = this.lastMessage;
     switch (msg.type) {
       case 'begin':
         if (this.session && this.session !== msg.session) {
@@ -256,6 +336,14 @@ export class RemoteHost {
   private post(msg: FromLaserline): void {
     if (!this.closed) this.channel.postMessage(msg);
   }
+}
+
+/** The page's `window` in a browser; nothing in Node or a worker. */
+function defaultPage(): Pick<EventTarget, 'addEventListener' | 'removeEventListener'> | null {
+  const w = (globalThis as { window?: unknown }).window;
+  return typeof w === 'object' && w !== null && typeof (w as EventTarget).addEventListener === 'function'
+    ? (w as EventTarget)
+    : null;
 }
 
 function randomId(): string {

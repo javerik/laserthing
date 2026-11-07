@@ -1,6 +1,74 @@
 import { type Emulator, LaserView, type LiveInfo } from '../wasm/laserline.js';
 import { type OverlayPattern, drawOverlayPattern } from './pattern.js';
 import { CanvasBridge, openPopup } from './popup.js';
+import type { RemoteScreen } from './remote.js';
+
+/**
+ * A screen of the Window Management API (`ScreenDetailed`, from `getScreenDetails()`), as far
+ * as laserline uses it.
+ */
+export interface ScreenLike {
+  /** Left edge on the virtual desktop, CSS px. */
+  left: number;
+  /** Top edge on the virtual desktop, CSS px. */
+  top: number;
+  /** Width, CSS px. */
+  width: number;
+  /** Height, CSS px. */
+  height: number;
+  /** The screen's name. */
+  label?: string;
+}
+
+/**
+ * Puts `doc` fullscreen, on `screen` (a `ScreenDetailed`) when given and the browser supports
+ * it. Must run in response to a user action in `doc`'s window; resolves to whether it worked.
+ */
+export function requestFullscreenOn(doc: Document, screen?: ScreenLike): Promise<boolean> {
+  const options = screen ? ({ screen } as FullscreenOptions) : undefined;
+  try {
+    return doc.documentElement.requestFullscreen(options).then(
+      () => true,
+      () => false,
+    );
+  } catch {
+    return Promise.resolve(false);
+  }
+}
+
+/**
+ * The screen `wanted` names in `screens` (`getScreenDetails().screens`): a number (or a string
+ * of digits) is an index, anything else a label; `undefined` if none matches.
+ */
+export function pickScreen<S extends ScreenLike>(screens: readonly S[], wanted: string | number | null | undefined): S | undefined {
+  if (wanted === null || wanted === undefined || wanted === '') return undefined;
+  const text = String(wanted).trim();
+  if (/^\d+$/.test(text)) return screens[Number(text)];
+  return screens.find((s) => s.label === text);
+}
+
+/**
+ * The screen `win` is on: its position and size from `win.screen`, and with `screens` (the
+ * Window Management API's list, when this origin may read it) the matching entry's `label`
+ * and `index`. `null` when `win` is closed.
+ */
+export function describeScreen(win: Window, screens?: readonly ScreenLike[] | null): RemoteScreen | null {
+  if (win.closed || !win.screen) return null;
+  const s = win.screen as Screen & { availLeft?: number; availTop?: number; isExtended?: boolean };
+  const out: RemoteScreen = { left: s.availLeft ?? 0, top: s.availTop ?? 0, width: s.width, height: s.height };
+  if (typeof s.isExtended === 'boolean') out.isExtended = s.isExtended;
+  if (screens?.length) {
+    const x = win.screenX + (win.outerWidth || 0) / 2;
+    const y = win.screenY + (win.outerHeight || 0) / 2;
+    const index = screens.findIndex((d) => x >= d.left && x < d.left + d.width && y >= d.top && y < d.top + d.height);
+    if (index >= 0) {
+      const d = screens[index];
+      Object.assign(out, { left: d.left, top: d.top, width: d.width, height: d.height, index });
+      if (d.label) out.label = d.label;
+    }
+  }
+  return out;
+}
 
 /** Options of {@link DetachedLaserView.open}. */
 export interface DetachedViewOptions {
@@ -149,12 +217,20 @@ export class DetachedLaserView {
     return !this.closed && !this.win.closed && !!this.win.document.fullscreenElement;
   }
 
-  /** Must run in response to a user action in the popup (e.g. its key presses). */
-  toggleFullscreen(): void {
+  /**
+   * Must run in response to a user action in the popup (e.g. its key presses); enters
+   * fullscreen on `screen` (a `ScreenDetailed`) when given.
+   */
+  toggleFullscreen(screen?: ScreenLike): void {
     if (this.closed || this.win.closed) return;
     const doc = this.win.document;
     if (doc.fullscreenElement) void doc.exitFullscreen();
-    else void doc.documentElement.requestFullscreen().catch(() => undefined);
+    else void requestFullscreenOn(doc, screen);
+  }
+
+  /** The screen the window is on, see {@link describeScreen}. */
+  screen(screens?: readonly ScreenLike[] | null): RemoteScreen | null {
+    return this.closed ? null : describeScreen(this.win, screens);
   }
 
   /** Draws the current frame of `emulator` into the window; returns its measurements. */

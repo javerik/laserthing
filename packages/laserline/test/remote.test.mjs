@@ -2,6 +2,7 @@
 import assert from 'node:assert/strict';
 import { afterEach, test } from 'node:test';
 import { RemoteHost } from '../dist/remote.js';
+import { describeScreen, pickScreen } from '../dist/detached-view.js';
 
 const STATUS = { viewPx: [800, 600], envelope: null, field: null, constraint: null, tilt_deg: 0 };
 
@@ -224,4 +225,101 @@ test('the metric mapping passes through, and a new revision is sent', async () =
   target.metric = null;
   h.postStatus();
   assert.equal((await c.next('status')).status.metric, null);
+});
+
+test('the window fields pass through the status', async () => {
+  const name = 'remote-test-window';
+  const target = fakeTarget();
+  const extra = {
+    visible: true,
+    fullscreen: false,
+    slicerOpen: false,
+    controls: 'none',
+    screen: { left: 1920, top: 0, width: 1920, height: 1080, label: 'DELL', index: 1 },
+  };
+  const status = target.status.bind(target);
+  target.status = () => ({ ...status(), ...extra });
+  const h = host(target, { channel: name, page: null });
+  const c = controller(name);
+  c.send({ type: 'hello' });
+  assert.deepEqual((await c.next('status')).status, { ...STATUS, ...extra, session: null });
+  extra.visible = false;
+  h.postStatus();
+  assert.equal((await c.next('status')).status.visible, false);
+});
+
+test('bye on close, ending a running session', async () => {
+  const name = 'remote-test-bye';
+  const target = fakeTarget();
+  const h = new RemoteHost(target, { channel: name, page: null });
+  const c = controller(name);
+  c.send({ type: 'begin', to: h.id, session: 's' });
+  await c.next('status');
+  h.close();
+  assert.equal((await c.next('status')).status.session, null);
+  assert.deepEqual(await c.next('bye'), { v: 1, type: 'bye', host: h.id });
+  assert.equal(target.calls.at(-1), 'end');
+  h.close();
+  await new Promise((r) => setTimeout(r, 20));
+  assert.equal(c.got.filter((m) => m.type === 'bye').length, 0, 'only once');
+});
+
+test('bye on pagehide, and the status again when the page comes back', async () => {
+  const name = 'remote-test-pagehide';
+  const page = new EventTarget();
+  const h = host(fakeTarget(), { channel: name, page });
+  const c = controller(name);
+  page.dispatchEvent(new Event('pagehide'));
+  assert.equal((await c.next('bye')).host, h.id);
+  const shown = new Event('pageshow');
+  shown.persisted = true;
+  page.dispatchEvent(shown);
+  assert.equal((await c.next('status')).host, h.id);
+  h.close();
+  await c.next('bye');
+  // Detached from the page once closed.
+  page.dispatchEvent(new Event('pagehide'));
+  await new Promise((r) => setTimeout(r, 20));
+  assert.equal(c.got.filter((m) => m.type === 'bye').length, 0);
+});
+
+test('linked after a controller spoke, until it goes quiet', async () => {
+  const name = 'remote-test-linked';
+  const h = host(fakeTarget(), { channel: name, idleMs: 40, page: null });
+  const c = controller(name);
+  assert.equal(h.linked, false);
+  c.send({ type: 'hello' });
+  await c.next('status');
+  assert.equal(h.linked, true);
+  await new Promise((r) => setTimeout(r, 80));
+  assert.equal(h.linked, false);
+  c.send({ type: 'begin', to: h.id, session: 's' });
+  await c.next('status');
+  await new Promise((r) => setTimeout(r, 20));
+  assert.equal(h.linked, true, 'a running session links');
+});
+
+test('screens: picked by index or label, described for a window', () => {
+  const screens = [
+    { left: 0, top: 0, width: 1920, height: 1080, label: 'Laptop' },
+    { left: 1920, top: 0, width: 2560, height: 1440, label: 'DELL' },
+  ];
+  assert.equal(pickScreen(screens, 1), screens[1]);
+  assert.equal(pickScreen(screens, '0'), screens[0]);
+  assert.equal(pickScreen(screens, 'DELL'), screens[1]);
+  assert.equal(pickScreen(screens, 'nope'), undefined);
+  assert.equal(pickScreen(screens, null), undefined);
+  const win = {
+    closed: false,
+    screen: { availLeft: 1920, availTop: 0, width: 2560, height: 1440, isExtended: true },
+    screenX: 2000,
+    screenY: 100,
+    outerWidth: 800,
+    outerHeight: 600,
+  };
+  assert.deepEqual(describeScreen(win), { left: 1920, top: 0, width: 2560, height: 1440, isExtended: true });
+  assert.deepEqual(describeScreen(win, screens), {
+    left: 1920, top: 0, width: 2560, height: 1440, isExtended: true, index: 1, label: 'DELL',
+  });
+  assert.equal(describeScreen({ ...win, closed: true }), null);
 });
