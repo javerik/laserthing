@@ -86,6 +86,13 @@ camera against the line (`RemoteHost` in `@javerik/laserline`). While one does,
 offers `store.fitToCameraField()`. A page can also limit the line to an area
 (`store.constraint()`, set remotely or with `store.setConstraint()`): every parameter change
 is kept inside it (`store.clamped()` says what gave way) until *Release limit*.
+A calibration closes the slicer and reopens it when it ends, and `store.importModel()` leaves
+it closed while `store.remoteLinked` is true.
+
+`store.enterViewOnly(screen?)` turns a page into a controls-free live view (the web app does
+it for `?view=detached`): controls and slicer close, window shortcuts stop, and
+`store.activateViewOnly()` (call it on the first click) goes fullscreen, on the named screen
+where the Window Management API allows.
 
 Smaller pieces (`ll-laser-canvas`, `ll-line-controls`, `ll-mesh-view`, `ll-range-image`,
 `ll-slider`, …) and the `LaserlineStore` are exported for custom layouts.

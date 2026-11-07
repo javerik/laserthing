@@ -113,6 +113,30 @@ view's drawing buffer, y down).
 
 The live view must stay visible: hidden windows get no animation frames, so no `shown`.
 
+Every status also says what the window looks like (optional fields, missing from an older
+laserline; a controller that doesn't know them ignores them): `visible` (the window rendering
+the live view is not minimised, covered by another tab or hidden), `fullscreen`, `slicerOpen`
+(the Object Slicer is open), `controls` (`docked`, `detached`, `hidden`, or `none` in the
+controls-free view) and `screen { left, top, width, height, isExtended?, label?, index? }`
+(the screen of the rendering window; `label` and `index` into `getScreenDetails().screens` only
+once the origin was granted `window-management`). Visibility and fullscreen changes are sent
+at once, also from a hidden window.
+
+| From laserline | When |
+|---|---|
+| `bye { host }` | The window goes away (`pagehide`, or `RemoteHost.close()`), after ending a running session. A controller can tell a closed window from a hidden one (a `status` with `visible: false`). A page restored from the back/forward cache sends its `status` again. |
+
+A session closes the Object Slicer (it covers the view) and opens it again when it ends; a
+model imported while a controller is linked (`RemoteHost.linked`: a session runs, or a
+controller sent the window anything, `hello` included, within the idle time) leaves it closed.
+
+The web app's `?view=detached` opens a page with only the live view and the remote host, no
+controls: a camera application opens it to film. The first click (or double-click) puts it
+fullscreen, on the screen `?screen=` names (an index into `getScreenDetails().screens`, or its
+label) where the origin may read the screens (`requestFullscreen({ screen })`); otherwise on
+the screen it is on. `requestFullscreenOn`, `pickScreen` and `describeScreen` are exported
+for other hosts.
+
 `status.metric` (`RemoteMetric`, `null` without a scan, with the scan disabled or before the
 first frame) tells a controller how the user's line shows the scan, so it can turn what its
 camera measures into the scan's millimetres (u along the line, v the travel, z the height):

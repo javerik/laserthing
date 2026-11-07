@@ -118,6 +118,43 @@ describe('LaserlineStore', () => {
     expect(s.dispatch('exitFullscreen')).toBe(false);
   });
 
+  it('shows only the live view in view-only mode', async () => {
+    const s = await store();
+    s.toggleSlicer();
+    s.enterViewOnly('1');
+    expect(s.viewOnly()).toBe(true);
+    expect(s.slicerOpen()).toBe(false);
+    expect(s.controls()).toBe('hidden');
+    // Window shortcuts do nothing; fullscreen still works.
+    expect(s.dispatch('toggleSlicer')).toBe(false);
+    expect(s.dispatch('toggleControlsHidden')).toBe(false);
+    expect(s.slicerOpen()).toBe(false);
+    const request = vi.fn(() => Promise.resolve());
+    document.documentElement.requestFullscreen = request;
+    expect(s.activateViewOnly()).toBe(true);
+    // No Window Management API here: plain fullscreen.
+    expect(request).toHaveBeenCalledWith(undefined);
+    expect(s.dispatch('toggleFullscreen')).toBe(true);
+    s.ngOnDestroy();
+  });
+
+  it('goes fullscreen on the screen it was asked for', async () => {
+    const screens = [
+      { left: 0, top: 0, width: 1920, height: 1080, label: 'Laptop' },
+      { left: 1920, top: 0, width: 2560, height: 1440, label: 'DELL' },
+    ];
+    vi.stubGlobal('getScreenDetails', vi.fn(() => Promise.resolve({ screens })));
+    vi.stubGlobal('navigator', { ...navigator, permissions: { query: () => Promise.resolve({ state: 'granted' }) } });
+    const s = await store();
+    s.enterViewOnly('DELL');
+    await new Promise((r) => setTimeout(r, 10));
+    const request = vi.fn(() => Promise.resolve());
+    document.documentElement.requestFullscreen = request;
+    s.activateViewOnly();
+    expect(request).toHaveBeenCalledWith({ screen: screens[1] });
+    s.ngOnDestroy();
+  });
+
   it('imports models in the slicing worker and takes their unit', async () => {
     const s = await store('test.', { createWorker: () => new FakeWorker() as unknown as Worker });
     s.setSliceSettings({ ...s.sliceSettings(), unit: 'Inch' });
@@ -484,6 +521,68 @@ describe('LaserlineStore windows', () => {
       expect(s.params().line.position_pct[0]).toBeCloseTo(55, 1);
       s.setCameraField(undefined);
       expect(localStorage.getItem('test.camera_field')).toBeNull();
+      s.ngOnDestroy();
+    });
+
+    it('reports the window: visibility, fullscreen, slicer, controls, screen', async () => {
+      const { s, step, send, next } = await remoteStore('spec-remote-window');
+      step();
+      send({ type: 'hello' });
+      const status = (await next('status')).status;
+      expect(status).toMatchObject({ visible: true, fullscreen: false, slicerOpen: false, controls: 'docked' });
+      expect(status.screen).toMatchObject({ left: expect.any(Number), width: expect.any(Number) });
+      s.toggleSlicer();
+      s.toggleControlsHidden();
+      const own = (s as unknown as { remoteStatus(): RemoteStatus }).remoteStatus();
+      expect(own).toMatchObject({ slicerOpen: true, controls: 'hidden' });
+      s.enterViewOnly();
+      expect((s as unknown as { remoteStatus(): RemoteStatus }).remoteStatus()).toMatchObject({ slicerOpen: false, controls: 'none' });
+      s.ngOnDestroy();
+    });
+
+    it('says bye when the store goes away', async () => {
+      const { s, step, send, next } = await remoteStore('spec-remote-bye');
+      step();
+      send({ type: 'hello' });
+      const host = (await next('status')).host;
+      s.ngOnDestroy();
+      expect((await next('bye')).host).toBe(host);
+    });
+
+    it('closes the slicer for a calibration and opens it again afterwards', async () => {
+      const { s, step, send, next, until } = await remoteStore('spec-remote-slicer');
+      step();
+      s.slicerOpen.set(true);
+      send({ type: 'hello' });
+      const host = (await next('status')).host;
+      send({ type: 'begin', to: host, session: 'cal' });
+      await until(() => s.calibrating());
+      expect(s.slicerOpen()).toBe(false);
+      send({ type: 'end', to: host, session: 'cal' });
+      await until(() => !s.calibrating());
+      expect(s.slicerOpen()).toBe(true);
+      // Closed before: stays closed.
+      s.slicerOpen.set(false);
+      send({ type: 'begin', to: host, session: 'cal2' });
+      await until(() => s.calibrating());
+      send({ type: 'end', to: host, session: 'cal2' });
+      await until(() => !s.calibrating());
+      expect(s.slicerOpen()).toBe(false);
+      s.ngOnDestroy();
+    });
+
+    it('imports a model without opening the slicer while a controller is linked', async () => {
+      const s = await store('test.', { remote: { channel: 'spec-remote-import' }, createWorker: () => new FakeWorker() as unknown as Worker });
+      const ch = new BroadcastChannel('spec-remote-import');
+      channels.push(ch);
+      const bytes = await readFile(resolve('models/l-block.3mf'));
+      expect(s.remoteLinked).toBe(false);
+      ch.postMessage({ v: 1, type: 'hello' });
+      for (let i = 0; i < 200 && !s.remoteLinked; i++) await new Promise((r) => setTimeout(r, 5));
+      expect(s.remoteLinked).toBe(true);
+      await s.openFile(new File([bytes], 'l-block.3mf'));
+      expect(s.status()).toMatch(/^Imported l-block.3mf .*slicer kept closed/);
+      expect(s.slicerOpen()).toBe(false);
       s.ngOnDestroy();
     });
 

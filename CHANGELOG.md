@@ -3,6 +3,19 @@
 ## Unreleased
 
 ### Added
+- Remote status fields for the window: `visible`, `fullscreen`, `slicerOpen`, `controls`
+  and `screen` (all optional, so older controllers ignore them), and a `bye` message when the
+  window goes away (`pagehide` or `RemoteHost.close()`), so a controller can tell a closed
+  window from a hidden one (rustcamserve#139). JS: `RemoteStatus`, `RemoteControls`,
+  `RemoteScreen`, `RemoteHost.linked`, `RemoteHostOptions.page`.
+- A calibration session closes the Object Slicer and opens it again when it ends; importing
+  a model while a controller is linked no longer opens it (rustcamserve#139).
+- Controls-free launch mode of the web app, `?view=detached` (optionally `&screen=<index or
+  label>`): only the live view and the remote host, fullscreen on the first click, on the
+  named screen where the Window Management API allows (rustcamserve#139). JS:
+  `LaserlineStore.enterViewOnly()`, `activateViewOnly()`, `requestFullscreen(screen?)`,
+  `viewOnly`, `remoteLinked`; `requestFullscreenOn`, `pickScreen`, `describeScreen`,
+  `DetachedLaserView.toggleFullscreen(screen?)` / `screen()`.
 - A controller can reset the line length: `reset-length` (answered with
   `length-reset { length, length_unit }`) sets the user's line to the view's full length
   (100 %), applied when a running session ends; a limit still applies. Meant for the start of
