@@ -664,6 +664,123 @@ describe('LaserlineStore windows', () => {
       s.ngOnDestroy();
     });
 
+    it('fits the heights into a band: lowers the scan gain, keeps the length', async () => {
+      const { s, step, send, next } = await remoteStore('spec-remote-heights');
+      step();
+      await loadBox(s);
+      const status = () => (s as unknown as { remoteStatus(): RemoteStatus }).remoteStatus();
+      const before = status().metric!;
+      const params = s.params();
+      expect(params.scan.height_gain).toBe('MatchScale');
+      // 8 mm at about 26.7 px/mm reach 213 px up; the band allows 60 px up, 10 down.
+      expect(status().envelope!.across_px[0]).toBeLessThan(-200);
+      send({ type: 'hello' });
+      const host = (await next('status')).host;
+      send({ type: 'fit-heights', to: host, id: 1, across: [-60, 10] });
+      const answer = await next('heights-fitted');
+      expect(answer).toMatchObject({ id: 1, fits: true });
+      // The heights keep the band's whole 70 px (6 px are the line's width), and the line
+      // moves down 7 px into it.
+      expect(answer.clamped).toEqual(['position', 'scan height']);
+      expect(s.params().scan.height_gain).toBe('Manual');
+      expect(s.params().scan.height_px_per_mm).toBeCloseTo(64 / 8, 2);
+      expect(s.params().line.length).toBe(params.line.length);
+      expect(s.params().line.position_pct[0]).toBe(params.line.position_pct[0]);
+      expect((s.params().line.position_pct[1] / 100) * 500).toBeCloseTo(257, 1);
+      const after = status();
+      expect(after.envelope!.across_px[0] + 7).toBeGreaterThanOrEqual(-60.01);
+      expect(after.envelope!.along_px).toEqual(status().envelope!.along_px);
+      expect(after.metric!.along_px_per_mm).toBeCloseTo(before.along_px_per_mm, 5);
+      expect(after.metric!.rev).toBeGreaterThan(before.rev);
+      // Already inside: nothing changes.
+      send({ type: 'fit-heights', to: host, id: 2, across: [-80, 10] });
+      expect(await next('heights-fitted')).toMatchObject({ id: 2, fits: true, clamped: [] });
+      // A band narrower than the line itself: nothing changes either.
+      send({ type: 'fit-heights', to: host, id: 3, across: [-2, 2] });
+      expect(await next('heights-fitted')).toMatchObject({ id: 3, fits: false, clamped: [] });
+      // A band that isn't one is an error with the id.
+      send({ type: 'fit-heights', to: host, id: 4, across: [10, -10] });
+      expect(await next('error')).toMatchObject({ id: 4 });
+      s.ngOnDestroy();
+    });
+
+    it('moves the line across into a band and applies it after a session', async () => {
+      const { s, step, send, next, until, rendered } = await remoteStore('spec-remote-heights-move');
+      step();
+      send({ type: 'hello' });
+      const host = (await next('status')).host;
+      send({ type: 'begin', to: host, session: 'cal' });
+      await until(() => s.calibrating());
+      // Undeformed, 6 px wide: across -3..3; the band 20..40 px below the line.
+      send({ type: 'fit-heights', to: host, id: 1, across: [20, 40] });
+      expect(await next('heights-fitted')).toMatchObject({ id: 1, fits: true, clamped: ['position'] });
+      expect(s.params().line.position_pct[0]).toBeCloseTo(50, 5);
+      expect((s.params().line.position_pct[1] / 100) * 500).toBeCloseTo(250 + 23, 1);
+      send({ type: 'end', to: host, session: 'cal' });
+      await until(() => !s.calibrating());
+      step();
+      expect((rendered.at(-1) as ReturnType<typeof s.params>).line.position_pct).toEqual(s.params().line.position_pct);
+      s.ngOnDestroy();
+    });
+
+    it('answers fit-heights with an error before the view has a size', async () => {
+      const { s, send, next } = await remoteStore('spec-remote-heights-nosize');
+      send({ type: 'hello' });
+      const host = (await next('status')).host;
+      send({ type: 'fit-heights', to: host, id: 9, across: [-10, 10] });
+      expect(await next('error')).toMatchObject({ id: 9, message: 'the view has no size yet' });
+      s.ngOnDestroy();
+    });
+
+    it('draws no outlines in the view-only page or while a scan plays', async () => {
+      const { s, step } = await remoteStore('spec-remote-outlines');
+      step();
+      const overlay = vi.fn();
+      vi.spyOn(DetachedLaserView, 'open').mockImplementation(
+        () =>
+          ({
+            ready: Promise.resolve(),
+            visible: true,
+            fullscreen: false,
+            backend: 'fake',
+            window: { closed: false, document: { visibilityState: 'visible' }, requestAnimationFrame: vi.fn(() => 1), cancelAnimationFrame: vi.fn() },
+            render: vi.fn(),
+            close: vi.fn(),
+            setOverlay: overlay,
+            setLimit: vi.fn(),
+            screen: () => null,
+          }) as unknown as DetachedLaserView,
+      );
+      const field: [number, number][] = [[400, 100], [700, 100], [700, 300], [400, 300]];
+      s.setCameraField(field, 'cam');
+      s.detachView();
+      expect(s.outlinesShown()).toBe(true);
+      expect(overlay).toHaveBeenLastCalledWith(field, 'cam');
+      // A playing scan hides them, in the page and the detached window.
+      await loadBox(s);
+      expect(s.scanPlaying()).toBe(true);
+      expect(s.outlinesShown()).toBe(false);
+      expect(overlay).toHaveBeenLastCalledWith(undefined, 'cam');
+      // Paused, or with the scan off, the checkbox decides again.
+      s.setPlaying(false);
+      expect(s.outlinesShown()).toBe(true);
+      expect(overlay).toHaveBeenLastCalledWith(field, 'cam');
+      s.setShowCameraField(false);
+      expect(s.outlinesShown()).toBe(false);
+      s.setShowCameraField(true);
+      s.setPlaying(true);
+      expect(s.outlinesShown()).toBe(false);
+      s.patchParams({ scan: { ...s.params().scan, enabled: false } });
+      expect(s.outlinesShown()).toBe(true);
+      // The view-only page never draws them.
+      s.enterViewOnly();
+      expect(s.outlinesShown()).toBe(false);
+      s.setPlaying(false);
+      expect(s.outlinesShown()).toBe(false);
+      vi.restoreAllMocks();
+      s.ngOnDestroy();
+    });
+
     it('keeps the line inside a limit until it is released', async () => {
       const { s, step, send, next, until } = await remoteStore('spec-remote-4');
       step();
