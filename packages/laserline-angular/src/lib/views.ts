@@ -130,11 +130,11 @@ export class LlLaserCanvas {
   private readonly patternCanvas = viewChild.required<ElementRef<HTMLCanvasElement>>('pattern');
   /**
    * The camera field's outline (dashed) and the limit's (solid), in the drawing buffer's
-   * pixels; hidden while calibrating.
+   * pixels; hidden where a camera films the view (`LaserlineStore.outlinesShown`).
    */
   protected readonly outlines = computed(() => {
     const [w, h] = this.store.live().view_px;
-    if (!this.store.showCameraField() || this.store.calibrating() || w <= 0 || h <= 0) return [];
+    if (!this.store.outlinesShown() || w <= 0 || h <= 0) return [];
     const outline = (kind: 'field' | 'limit', polygon: ViewPoint[] | undefined, label: string | undefined) => {
       if (!polygon?.length) return [];
       const top = polygon.reduce((a, p) => (p[1] < a[1] || (p[1] === a[1] && p[0] < a[0]) ? p : a));

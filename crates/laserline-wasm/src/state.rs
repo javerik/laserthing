@@ -187,6 +187,24 @@ impl Emulator {
         let area: Vec<[f32; 2]> = from_js(area)?;
         Ok(to_js(&calibration::constrain_into(&params, &area, [view_w, view_h], self.inner.scan.as_deref())))
     }
+
+    /// `params` changed so the line's envelope lies inside the band `across` = `[min, max]`
+    /// (view px along its normal about its resting center, as `Envelope.across_px`): moved
+    /// across only as far as needed, then its deformation or the scan's height gain lowered
+    /// (a derived gain becomes `Manual`). Length, motion, scan scale and position along stay.
+    /// `fits` is false, and nothing changes, when the width and motion alone are too wide.
+    #[wasm_bindgen(js_name = fitHeights, unchecked_return_type = "HeightsFit")]
+    pub fn fit_heights(
+        &self,
+        #[wasm_bindgen(unchecked_param_type = "LaserParams")] params: JsValue,
+        #[wasm_bindgen(unchecked_param_type = "[number, number]")] across: JsValue,
+        #[wasm_bindgen(js_name = viewW)] view_w: f32,
+        #[wasm_bindgen(js_name = viewH)] view_h: f32,
+    ) -> Result<JsValue, JsError> {
+        let params = from_js(params)?;
+        let across: [f32; 2] = from_js(across)?;
+        Ok(to_js(&calibration::fit_heights(&params, across, [view_w, view_h], self.inner.scan.as_deref())))
+    }
 }
 
 #[derive(Serialize)]

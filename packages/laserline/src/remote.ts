@@ -95,7 +95,8 @@ export type ToLaserline =
   | { v: 1; type: 'fit-to-field'; to: string; id: number; margin: number }
   | { v: 1; type: 'constrain'; to: string; id: number; polygon: ViewPoint[] | null; label?: string }
   | { v: 1; type: 'tilt'; to: string; id: number; tilt_deg: number }
-  | { v: 1; type: 'reset-length'; to: string; id: number };
+  | { v: 1; type: 'reset-length'; to: string; id: number }
+  | { v: 1; type: 'fit-heights'; to: string; id: number; across: [number, number] };
 
 /** Messages from a laserline window; `host` identifies it. */
 export type FromLaserline =
@@ -105,6 +106,7 @@ export type FromLaserline =
   | { v: 1; type: 'constrained'; host: string; id: number; clamped: string[] }
   | { v: 1; type: 'tilted'; host: string; id: number; tilt_deg: number }
   | { v: 1; type: 'length-reset'; host: string; id: number; length: number; length_unit: LengthUnit }
+  | { v: 1; type: 'heights-fitted'; host: string; id: number; fits: boolean; clamped: string[] }
   | { v: 1; type: 'error'; host: string; session?: string; id?: number; message: string }
   | { v: 1; type: 'bye'; host: string };
 
@@ -131,6 +133,28 @@ export interface RemoteTarget {
   setTilt(deg: number): number;
   /** Set the user's line to the view's full length; returns the length kept (a limit may shorten it). */
   resetLength(): { length: number; length_unit: LengthUnit };
+  /**
+   * Move the user's line across and lower its heights until its envelope's across range lies
+   * inside `across` (`[min, max]`, view px along its normal about its resting center, as
+   * `Envelope.across_px`); see {@link HeightsFitted}. Throws when it can't try, e.g. before
+   * the view has a size. A target without it answers `fit-heights` with an `error`.
+   */
+  fitHeights?(across: [number, number]): HeightsFitted;
+}
+
+/** What `fit-heights` did ({@link RemoteTarget.fitHeights}), the body of `heights-fitted`. */
+export interface HeightsFitted {
+  /**
+   * The envelope's across range now lies inside the band. False, with nothing changed, when
+   * the line's width and motion alone are wider than the band.
+   */
+  fits: boolean;
+  /**
+   * What changed, in words: `position` (moved across, never along), `deformation`, `scan height`
+   * (the scan's height gain, made `Manual` when it was derived from the scan scale). A limit
+   * (`constrain`) applied afterwards may add its own. Empty when nothing changed.
+   */
+  clamped: string[];
 }
 
 /** Options of {@link RemoteHost}. */
@@ -166,6 +190,11 @@ export interface RemoteHostOptions {
  * 8. `reset-length` → the window sets the user's line to the view's full length (100 %, applied
  *    when a running session ends), answering `length-reset` with the length kept. A controller
  *    sends it before a calibration, since `fit-to-field` and `constrain` only ever shorten it.
+ * 9. `fit-heights` → the window moves the user's line across (never along) and lowers its
+ *    deformation or the scan's height gain until the line's envelope lies inside a band across
+ *    it (e.g. the rows the camera's region sees), answering `heights-fitted` with what changed.
+ *    Length, motion, scan scale and position along stay; during a session it applies when the
+ *    session ends.
  *
  * Every status carries the line's `metric` mapping (view px per mm of the scan, the base
  * line, the travel speed), so a controller can turn what its camera measures into mm, and
@@ -309,6 +338,22 @@ export class RemoteHost {
       case 'tilt': {
         const tilt_deg = this.target.setTilt(msg.tilt_deg);
         this.post({ v: 1, type: 'tilted', host: this.id, id: msg.id, tilt_deg });
+        this.postStatus();
+        break;
+      }
+      case 'fit-heights': {
+        const across = msg.across;
+        const valid = Array.isArray(across) && across.length === 2 && across.every(Number.isFinite) && across[0] < across[1];
+        let result: HeightsFitted;
+        try {
+          if (!this.target.fitHeights) throw new Error('fit-heights is not supported');
+          if (!valid) throw new Error('across must be [min, max] with min < max');
+          result = this.target.fitHeights([across[0], across[1]]);
+        } catch (e) {
+          this.post({ v: 1, type: 'error', host: this.id, id: msg.id, message: e instanceof Error ? e.message : String(e) });
+          return;
+        }
+        this.post({ v: 1, type: 'heights-fitted', host: this.id, id: msg.id, fits: result.fits, clamped: result.clamped });
         this.postStatus();
         break;
       }

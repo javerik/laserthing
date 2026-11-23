@@ -8,6 +8,8 @@
 //!   of the view a camera sees.
 //! - [`constrain_into`]: changes the line as little as needed to keep its envelope inside an
 //!   area, for a controller that limits where the line may go.
+//! - [`fit_heights`]: moves the line across and lowers its heights (never its length or
+//!   travel) until its envelope lies inside a band, e.g. the rows a camera's region sees.
 //!
 //! All coordinates are view pixels (the canvas' drawing buffer, y down).
 
@@ -331,6 +333,114 @@ pub fn constrain_into(params: &LaserParams, area: &[[f32; 2]], view_px: [f32; 2]
     Constrained { clamped: changes(params, &result), params: result, fits }
 }
 
+/// Result of [`fit_heights`].
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "wasm", derive(tsify::Tsify))]
+pub struct HeightsFit {
+    /// The adjusted parameters; the given ones when the line already lies inside the band or
+    /// can't be made to.
+    pub params: LaserParams,
+    /// The envelope's across range now lies inside the band. False (and nothing changed) when
+    /// the line's width and motion alone are wider than the band, the band is empty or the
+    /// view has no size.
+    pub fits: bool,
+    /// What had to change, in words: `position` (across only), `deformation`, `scan height`.
+    /// Empty when nothing did.
+    pub clamped: Vec<String>,
+}
+
+/// `params` changed so the line's envelope lies inside the band `across` = `[min, max]`: view
+/// px along the line's normal about its resting center now (as [`Envelope::across_px`], so
+/// about the metric base line), e.g. the rows a camera's region sees.
+///
+/// 1. unchanged when the envelope's across range already lies inside;
+/// 2. else, if the range is not wider than the band, the line moves across (along its normal,
+///    never along it) only as far as needed;
+/// 3. else the deformation and the scan's height gain shrink to the largest size whose range
+///    fits, and the line then moves as in 2. A height gain derived from the scan scale
+///    (`MatchScale`, `FromAngle`) becomes `Manual` at the lowered value;
+/// 4. unchanged, with `fits` false, when even flat the line (its width and motion) is wider
+///    than the band.
+///
+/// Length, motion, the scan scale and the position along the line stay as they are, so the
+/// mapping along the line and the travel don't change; only the heights do.
+pub fn fit_heights(params: &LaserParams, across: [f32; 2], view_px: [f32; 2], scan: Option<&Scan>) -> HeightsFit {
+    let unchanged = |fits| HeightsFit { params: params.clone(), fits, clamped: Vec::new() };
+    let [lo, hi] = across;
+    if !(lo.is_finite() && hi.is_finite() && lo < hi) || view_px[0] <= 0.0 || view_px[1] <= 0.0 {
+        return unchanged(false);
+    }
+    let range = |p: &LaserParams| line_envelope(p, view_px, scan).across_px;
+    let r = range(params);
+    if r[0] >= lo && r[1] <= hi {
+        return unchanged(true);
+    }
+    let band = hi - lo;
+    let width = |r: [f32; 2]| r[1] - r[0];
+    let lowered = |s: f32| lowered_heights(params, s, view_px, scan);
+
+    let sized = if width(r) <= band {
+        params.clone()
+    } else if width(range(&lowered(0.0))) > band {
+        // The width and motion alone don't fit: change nothing.
+        return unchanged(false);
+    } else {
+        // The range shrinks monotonically with the scale: bisect for the largest that fits.
+        let (mut s_lo, mut s_hi) = (0.0f32, 1.0f32);
+        for _ in 0..30 {
+            let mid = 0.5 * (s_lo + s_hi);
+            if width(range(&lowered(mid))) <= band { s_lo = mid } else { s_hi = mid }
+        }
+        lowered(s_lo)
+    };
+
+    // Move across only as far as needed.
+    let r = range(&sized);
+    let shift = if r[0] < lo {
+        lo - r[0]
+    } else if r[1] > hi {
+        hi - r[1]
+    } else {
+        0.0
+    };
+    let mut result = sized;
+    if shift != 0.0 {
+        let e = line_envelope(&result, view_px, scan);
+        let center = [e.center_px[0] + e.normal[0] * shift, e.center_px[1] + e.normal[1] * shift];
+        result.line.position_pct = [center[0] / view_px[0] * 100.0, center[1] / view_px[1] * 100.0];
+    }
+    // The band is fixed in the view: measure the result about the original center.
+    let e0 = line_envelope(params, view_px, scan);
+    let e = line_envelope(&result, view_px, scan);
+    let offset = (e.center_px[0] - e0.center_px[0]) * e0.normal[0] + (e.center_px[1] - e0.center_px[1]) * e0.normal[1];
+    const TOLERANCE_PX: f32 = 1e-2;
+    let fits = e.across_px[0] + offset >= lo - TOLERANCE_PX && e.across_px[1] + offset <= hi + TOLERANCE_PX;
+    let result = keep_inactive(params, result);
+    HeightsFit { clamped: changes(params, &result), params: result, fits }
+}
+
+/// `p` with the heights that shape its line now (the scan's while it plays one, else the
+/// deformation) times `s`. A height gain derived from the scan scale becomes `Manual` at its
+/// derived value times `s`; at `s == 1` nothing changes.
+fn lowered_heights(p: &LaserParams, s: f32, view_px: [f32; 2], scan: Option<&Scan>) -> LaserParams {
+    let mut p = p.clone();
+    if s == 1.0 {
+        return p;
+    }
+    match scan.filter(|_| p.scan.enabled) {
+        Some(sc) => {
+            let (mapping, _) = scan::display_mapping(sc, &p.scan, model::line_length_px(&p.line, view_px));
+            p.scan.height_gain = HeightGain::Manual;
+            p.scan.height_px_per_mm = mapping.height_px_per_mm * s;
+        }
+        None => {
+            p.deform.height_px *= s;
+            p.deform.amplitude_px *= s;
+        }
+    }
+    p
+}
+
 /// `result` with the settings the line doesn't use now (another motion or deformation kind,
 /// a disabled scan) put back as in `original`: shrinking them limits nothing and would
 /// surprise the user switching to them later.
@@ -367,7 +477,7 @@ fn changes(a: &LaserParams, b: &LaserParams) -> Vec<String> {
     note(a.motion.span_pct != b.motion.span_pct || a.motion.amplitude_px != b.motion.amplitude_px, "movement");
     note(a.deform.height_px != b.deform.height_px || a.deform.amplitude_px != b.deform.amplitude_px, "deformation");
     note(a.scan.px_per_mm != b.scan.px_per_mm, "scan scale");
-    note(a.scan.height_px_per_mm != b.scan.height_px_per_mm, "scan height");
+    note(a.scan.height_px_per_mm != b.scan.height_px_per_mm || a.scan.height_gain != b.scan.height_gain, "scan height");
     out
 }
 
@@ -727,5 +837,129 @@ mod tests {
         p.line.width_px = 300.0;
         assert!(!constrain_into(&p, &rect(0.0, 100.0, 1000.0, 300.0), VIEW, None).fits);
         assert!(!constrain_into(&p, &[[0.0, 0.0], [1.0, 1.0]], VIEW, None).fits);
+    }
+
+    fn box_scan() -> Scan {
+        use crate::mesh::box_mesh;
+        use crate::scan::{Progress, SliceSettings, slice};
+        use std::sync::atomic::AtomicBool;
+        let m = box_mesh([0.0; 3], [10.0, 5.0, 3.0]);
+        let s = SliceSettings { lateral_res_mm: 1.0, travel_step_mm: 1.0, ..Default::default() };
+        slice(&m, &s, "", &AtomicBool::new(false), &Progress::new(0)).unwrap()
+    }
+
+    #[test]
+    fn fit_heights_keeps_a_line_inside_the_band() {
+        let p = LaserParams::default(); // 6 px wide: across -3..3
+        let f = fit_heights(&p, [-10.0, 10.0], VIEW, None);
+        assert!(f.fits);
+        assert!(f.clamped.is_empty());
+        assert_eq!(f.params, p);
+    }
+
+    #[test]
+    fn fit_heights_moves_the_line_across_only_as_far_as_needed() {
+        let mut p = LaserParams::default();
+        p.line.width_px = 2.0;
+        p.line.position_pct = [30.0, 50.0];
+        p.deform = DeformParams { kind: DeformKind::Step, height_px: -40.0, ..Default::default() };
+        // Across -41..1 (higher = up); the band -30..20 is wide enough: move by +11.
+        let f = fit_heights(&p, [-30.0, 20.0], VIEW, None);
+        assert!(f.fits);
+        assert_eq!(f.clamped, vec!["position".to_string()]);
+        assert_eq!(f.params.deform, p.deform);
+        // Horizontal line: across is +y, along is x and stays.
+        assert!(approx(f.params.line.position_pct[0], 30.0));
+        assert!(approx(f.params.line.position_pct[1] / 100.0 * VIEW[1], 250.0 + 11.0), "{:?}", f.params.line.position_pct);
+        assert_eq!(f.params.line.length, p.line.length);
+    }
+
+    #[test]
+    fn fit_heights_lowers_the_deformation_but_not_the_length() {
+        let mut p = LaserParams::default();
+        p.profile.end_softness_px = 0.0;
+        p.line.width_px = 2.0;
+        p.deform = DeformParams { kind: DeformKind::Bump, height_px: -100.0, ..Default::default() };
+        p.motion = MotionParams { kind: MotionKind::Sine, amplitude_px: 5.0, ..Default::default() };
+        let before = line_envelope(&p, VIEW, None);
+        let f = fit_heights(&p, [-40.0, 10.0], VIEW, None);
+        assert!(f.fits);
+        assert!(f.clamped.contains(&"deformation".to_string()));
+        assert!(f.params.deform.height_px > -100.0 && f.params.deform.height_px < 0.0);
+        assert_eq!(f.params.line.length, p.line.length);
+        assert_eq!(f.params.motion, p.motion);
+        let e = line_envelope(&f.params, VIEW, None);
+        assert_eq!(e.along_px, before.along_px);
+        // The band is fixed in the view: about the original center.
+        let offset = e.center_px[1] - before.center_px[1];
+        assert!(e.across_px[0] + offset >= -40.0 - 1e-2 && e.across_px[1] + offset <= 10.0 + 1e-2, "{:?} {offset}", e.across_px);
+        // As large as the band allows: the range fills it.
+        assert!((e.across_px[1] - e.across_px[0] - 50.0).abs() < 0.1, "{:?}", e.across_px);
+    }
+
+    #[test]
+    fn fit_heights_lowers_a_scan_gain_and_switches_it_to_manual() {
+        let scan = box_scan();
+        let mut p = LaserParams::default();
+        p.profile.end_softness_px = 0.0;
+        p.line.width_px = 0.0;
+        // MatchScale at 10 px/mm: 3 mm heights reach 30 px up.
+        p.scan = ScanParams { enabled: true, scale: ScanScale::Fixed, px_per_mm: 10.0, ..Default::default() };
+        assert_eq!(p.scan.height_gain, HeightGain::MatchScale);
+        let before = line_envelope(&p, VIEW, Some(&scan));
+        assert!(approx(before.across_px[0], -30.0));
+        let f = fit_heights(&p, [-12.0, 0.0], VIEW, Some(&scan));
+        assert!(f.fits);
+        assert_eq!(f.params.scan.height_gain, HeightGain::Manual);
+        assert!((f.params.scan.height_px_per_mm - 4.0).abs() < 1e-3, "{}", f.params.scan.height_px_per_mm);
+        assert_eq!(f.clamped, vec!["scan height".to_string()]);
+        // Length, scale and position stay.
+        assert_eq!(f.params.scan.px_per_mm, 10.0);
+        assert_eq!(f.params.scan.scale, ScanScale::Fixed);
+        assert_eq!(f.params.line.position_pct, p.line.position_pct);
+        assert_eq!(line_envelope(&f.params, VIEW, Some(&scan)).along_px, before.along_px);
+        // FromAngle too, from its derived value.
+        p.scan.height_gain = HeightGain::FromAngle;
+        let f = fit_heights(&p, [-1.0, 0.0], VIEW, Some(&scan));
+        assert!(f.fits);
+        assert_eq!(f.params.scan.height_gain, HeightGain::Manual);
+        assert!(line_envelope(&f.params, VIEW, Some(&scan)).across_px[0] >= -1.0 - 1e-2);
+        // The deformation is not what shapes a playing scan: it stays.
+        assert_eq!(f.params.deform, p.deform);
+    }
+
+    #[test]
+    fn fit_heights_reports_a_line_wider_than_the_band() {
+        let mut p = LaserParams::default();
+        p.line.width_px = 30.0;
+        p.deform = DeformParams { kind: DeformKind::Step, height_px: -100.0, ..Default::default() };
+        let f = fit_heights(&p, [-10.0, 10.0], VIEW, None);
+        assert!(!f.fits);
+        assert!(f.clamped.is_empty());
+        assert_eq!(f.params, p);
+        // Motion counts as width: it is not lowered.
+        let mut m = LaserParams::default();
+        m.motion = MotionParams { kind: MotionKind::Sine, amplitude_px: 50.0, ..Default::default() };
+        assert!(!fit_heights(&m, [-20.0, 20.0], VIEW, None).fits);
+        // An empty band, or a view without size.
+        assert!(!fit_heights(&LaserParams::default(), [5.0, 5.0], VIEW, None).fits);
+        assert!(!fit_heights(&LaserParams::default(), [f32::NAN, 5.0], VIEW, None).fits);
+        assert!(!fit_heights(&LaserParams::default(), [-5.0, 5.0], [0.0, 0.0], None).fits);
+    }
+
+    #[test]
+    fn fit_heights_moves_a_tilted_line_along_its_normal() {
+        let mut p = LaserParams::default();
+        p.line.width_px = 2.0;
+        p.line.tilt_deg = 20.0;
+        p.deform = DeformParams { kind: DeformKind::Step, height_px: -40.0, ..Default::default() };
+        let before = line_envelope(&p, VIEW, None);
+        let f = fit_heights(&p, [-20.0, 30.0], VIEW, None);
+        assert!(f.fits);
+        let e = line_envelope(&f.params, VIEW, None);
+        let d = [e.center_px[0] - before.center_px[0], e.center_px[1] - before.center_px[1]];
+        // Nothing along the line, +21 px across it.
+        assert!((d[0] * before.dir[0] + d[1] * before.dir[1]).abs() < 1e-2, "{d:?}");
+        assert!(approx(d[0] * before.normal[0] + d[1] * before.normal[1], 21.0), "{d:?}");
     }
 }

@@ -86,6 +86,11 @@ camera against the line (`RemoteHost` in `@javerik/laserline`). While one does,
 offers `store.fitToCameraField()`. A page can also limit the line to an area
 (`store.constraint()`, set remotely or with `store.setConstraint()`): every parameter change
 is kept inside it (`store.clamped()` says what gave way) until *Release limit*.
+The outlines are drawn while `store.outlinesShown()`: the *Outline* checkbox
+(`store.showCameraField()`), but never in the view-only page, during a calibration, or while a
+scan plays (`store.scanPlaying()`), since the camera filming the view would read them as laser
+points. `store.fitHeights([min, max])` (remotely `fit-heights`) moves the line across and lowers
+its heights until they lie inside a band across it, e.g. the rows the camera's region sees.
 A calibration closes the slicer and reopens it when it ends, and `store.importModel()` leaves
 it closed while `store.remoteLinked` is true.
 

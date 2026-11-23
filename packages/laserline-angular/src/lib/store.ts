@@ -1,4 +1,4 @@
-import { Injectable, NgZone, OnDestroy, effect, inject, signal, untracked } from '@angular/core';
+import { Injectable, NgZone, OnDestroy, computed, effect, inject, signal, untracked } from '@angular/core';
 import {
   type Action,
   AnimationLoop,
@@ -7,6 +7,7 @@ import {
   type FullLaserParams,
   type FullLiveInfo,
   type FullSliceSettings,
+  type Envelope,
   type GridInfo,
   type LaserView,
   type LengthUnit,
@@ -196,8 +197,18 @@ export class LaserlineStore implements OnDestroy {
   readonly cameraField = signal<ViewPoint[] | undefined>(undefined);
   /** Name of the camera whose field `cameraField` is. */
   readonly cameraFieldLabel = signal<string | undefined>(undefined);
-  /** Draw the camera field's outline (and the limit's) over the live view. */
+  /** Draw the camera field's outline (and the limit's) over the live view (the *Outline* checkbox). */
   readonly showCameraField = signal(true);
+  /** A scan shapes the line and its playback runs: a camera filming the view records it. */
+  readonly scanPlaying = computed(() => this.playing() && !!this.scan() && !!this.params()?.scan.enabled);
+  /**
+   * The outlines are drawn now: `showCameraField`, except where a camera films the view and
+   * would read them as laser points. Never in the view-only page (`enterViewOnly`), and not
+   * while a calibration runs or a scan plays.
+   */
+  readonly outlinesShown = computed(
+    () => this.showCameraField() && !this.viewOnly() && !this.calibrating() && !this.scanPlaying(),
+  );
   /**
    * The area (view px) a controller keeps the line in (`RemoteTarget.constrain`): every
    * parameter change is adjusted to stay inside it, so controls stop at its edges.
@@ -234,6 +245,8 @@ export class LaserlineStore implements OnDestroy {
   private wantedScreen?: string;
   /** Whether the slicer was open when a calibration began; it opens again when that ends. */
   private slicerBeforeCalibration = false;
+  /** `outlinesShown` as last given to the detached view (`syncOverlay`). */
+  private overlayShown?: boolean;
   private readonly syncWindows = () => {
     const popup = this.detached;
     // A hidden window gets no animation frames: follow one being looked at, preferring
@@ -329,6 +342,7 @@ export class LaserlineStore implements OnDestroy {
           constrain: (polygon, label) => this.setConstraint(polygon, label),
           setTilt: (deg) => this.setTilt(deg),
           resetLength: () => this.resetLength(),
+          fitHeights: (across) => this.fitHeights(across),
         },
         this.config.remote === true ? {} : this.config.remote,
       );
@@ -513,6 +527,7 @@ export class LaserlineStore implements OnDestroy {
    */
   enterViewOnly(screen?: string | null): void {
     this.viewOnly.set(true);
+    this.syncOverlay();
     this.wantedScreen = screen ?? undefined;
     this.dockView();
     this.closeControlsWindow();
@@ -747,6 +762,7 @@ export class LaserlineStore implements OnDestroy {
     // A calibration owns the view; the parameters apply when it ends.
     if (!this.calibrating()) this.emu!.params = params;
     this.params.set(params);
+    this.syncOverlayIfChanged();
     this.schedulePersist();
   }
 
@@ -764,6 +780,7 @@ export class LaserlineStore implements OnDestroy {
   setPlaying(playing: boolean): void {
     if (!this.calibrating()) this.emu!.playing = playing;
     this.playing.set(playing);
+    this.syncOverlayIfChanged();
   }
 
   /** Rewinds the clock and the scan playback. */
@@ -897,6 +914,7 @@ export class LaserlineStore implements OnDestroy {
     this.emu!.setScan(scan);
     this.scan.set(scan);
     this.row.set(this.emu!.currentRow);
+    this.syncOverlayIfChanged();
   }
 
   /** Replaces the slice settings and persists them. */
@@ -1006,6 +1024,36 @@ export class LaserlineStore implements OnDestroy {
     this.setStatus('Line length reset to the full view');
     const { length, length_unit } = this.params().line;
     return { length, length_unit };
+  }
+
+  /**
+   * Moves the line across (never along) and lowers its deformation or the scan's height gain
+   * until its envelope's across range lies inside `across` (`[min, max]`, view px along its
+   * normal about its resting center, as `Envelope.across_px`), e.g. the band a camera's region
+   * sees. A gain derived from the scan scale becomes `Manual` at the lowered value; length,
+   * motion, scan scale and position along stay. A limit still applies afterwards, and during a
+   * calibration it applies when that ends. Returns whether the line now lies inside and what
+   * changed; throws on a band that isn't one or before the view has a size.
+   */
+  fitHeights(across: [number, number]): { fits: boolean; clamped: string[] } {
+    const [lo, hi] = across ?? [];
+    if (!Number.isFinite(lo) || !Number.isFinite(hi) || lo >= hi) throw new Error('across must be [min, max] with min < max');
+    const [w, h] = this.viewPx;
+    if (!this.emu || w <= 0 || h <= 0) throw new Error('the view has no size yet');
+    const before = this.params();
+    const fit = this.emu.fitHeights(before, [lo, hi], w, h);
+    if (!fit.fits) {
+      this.setStatus('The line is too wide for the camera band');
+      return { fits: false, clamped: [] };
+    }
+    if (!fit.clamped.length) return { fits: true, clamped: [] };
+    this.setParams(fit.params as FullLaserParams);
+    // A limit may have changed more (or moved the line back out of the band).
+    const limited = this.clamped();
+    const clamped = [...fit.clamped, ...limited.filter((c) => !fit.clamped.includes(c))];
+    const fits = !limited.length || bandHolds(this.emu.envelope(before, w, h), this.emu.envelope(this.params(), w, h), lo, hi);
+    this.setStatus(fits ? `Heights fitted into the camera band: ${fit.clamped.join(', ')}` : 'The limit keeps the line out of the camera band');
+    return { fits, clamped };
   }
 
   /** `params` adjusted to keep the line inside `constraint`; as they are without one or before the view has a size. */
@@ -1123,9 +1171,15 @@ export class LaserlineStore implements OnDestroy {
   private syncOverlay(): void {
     const field = this.cameraField();
     const limit = this.constraint();
-    const shown = this.showCameraField() && !this.calibrating();
+    const shown = this.outlinesShown();
+    this.overlayShown = shown;
     this.detached?.setOverlay(shown ? field : undefined, this.cameraFieldLabel());
     this.detached?.setLimit(shown ? limit : undefined, limitLabel(this.constraintLabel()));
+  }
+
+  /** `syncOverlay` when `outlinesShown` changed since (e.g. a scan started playing). */
+  private syncOverlayIfChanged(): void {
+    if (this.outlinesShown() !== this.overlayShown) this.syncOverlay();
   }
 
   // ---- status and persistence
@@ -1184,6 +1238,17 @@ function forwardKey(e: KeyboardEvent): void {
 
 function sameLive(a: FullLiveInfo, b: FullLiveInfo): boolean {
   return JSON.stringify(a) === JSON.stringify(b);
+}
+
+/**
+ * Whether the envelope `after` lies inside the band `[lo, hi]` given about the resting center
+ * of `before` (the band is fixed in the view, the line may have moved).
+ */
+function bandHolds(before: Envelope, after: Envelope, lo: number, hi: number): boolean {
+  const n = before.normal;
+  const offset = (after.center_px[0] - before.center_px[0]) * n[0] + (after.center_px[1] - before.center_px[1]) * n[1];
+  const tolerance = 1e-2;
+  return after.across_px[0] + offset >= lo - tolerance && after.across_px[1] + offset <= hi + tolerance;
 }
 
 /** The label drawn on the limit's outline. */

@@ -201,6 +201,12 @@ test('calibration helpers', () => {
   assert.equal(kept.fits, true);
   assert.ok(kept.clamped.includes('length'));
   assert.deepEqual(emu.constrainInto(p, [[0, 0], [1000, 0], [1000, 500], [0, 500]], 1000, 500).clamped, []);
+  const deformed = { ...p, deform: { ...p.deform, kind: 'Step', height_px: -100 } };
+  const heights = emu.fitHeights(deformed, [-30, 20], 1000, 500);
+  assert.equal(heights.fits, true);
+  assert.ok(heights.clamped.includes('deformation'));
+  assert.equal(heights.params.line.length, deformed.line.length);
+  assert.equal(emu.fitHeights(p, [5, 5], 1000, 500).fits, false);
   emu.free();
 });
 

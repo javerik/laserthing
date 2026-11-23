@@ -220,6 +220,9 @@ export class LlObjectScan {
         }
       </div>
     }
+    @if ((store.cameraField() || store.constraint()) && !store.calibrating() && store.showCameraField() && store.scanPlaying()) {
+      <p class="weak">Outlines are hidden while the scan plays, so the camera doesn't film them.</p>
+    }
   `,
   styles: [THEME, `:host { display: flex; flex-direction: column; gap: 6px; } p { margin: 0; }`],
 })
