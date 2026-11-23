@@ -13,7 +13,8 @@ profiles such a sensor would measure. Runs natively (egui) and in the browser
   (single parts: assembly placements are not applied).
 - **Camera calibration** (web): another page of the same origin can drive the line over a
   `BroadcastChannel` to calibrate a camera filming the screen, then outline the camera's
-  field and fit the line into it (`RemoteHost`, see `packages/laserline/README.md`). Its
+  field and fit the line, or its heights, into it (`RemoteHost`, see
+  `packages/laserline/README.md`). Nothing but the line is drawn while a scan plays. Its
   status says how the line maps a scan's millimetres into view pixels and how fast the scan
   travels, so the camera's measurements can be made metric.
 

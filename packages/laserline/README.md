@@ -88,7 +88,7 @@ preset JSON files.
 | `profileCurve`, `deformCurve`, `sampleDeformation`, `motionOffset`, `lineAngle`, `extentAlong`, `laserRgb`, `wavelengthToRgb`, `niceStep` | Line model and plot helpers |
 | `actionForKey`, `SHORTCUTS`, `shortcutHelp` | Keyboard shortcuts |
 | `RemoteHost`, `ToLaserline`, `FromLaserline`, `REMOTE_CHANNEL` | Let another page drive the line (camera calibration), see below |
-| `Emulator.envelope`, `Emulator.fitInto`, `calibrationParams`, `patternParams` | The line's envelope over its whole motion; fitting it into a camera field; calibration patterns |
+| `Emulator.envelope`, `Emulator.fitInto`, `Emulator.fitHeights`, `calibrationParams`, `patternParams` | The line's envelope over its whole motion; fitting it into a camera field, or its heights into a band; calibration patterns |
 | `Emulator.metric`, `RemoteMetric` | How the line maps the scan's mm into view px, and the travel speed |
 | `readFileBytes`, `downloadBytes` | File helpers |
 
@@ -110,6 +110,7 @@ view's drawing buffer, y down).
 | `constrain { to, id, polygon, label? }` | `constrained { id, clamped }`; from now on the line, its motion, deformation and scan heights stay inside the convex polygon (`clamped` names what the current parameters gave up); `null` releases it |
 | `tilt { to, id, tilt_deg }` | `tilted { id, tilt_deg }` with the tilt kept (clamped to ±45°) after setting it as the user's line tilt; during a session it applies when the session ends |
 | `reset-length { to, id }` | `length-reset { id, length, length_unit }` with the length kept (a limit may shorten it) after setting the user's line to the view's full length (100 %); during a session it applies when the session ends. Send it before a calibration: `fit-to-field` and `constrain` only ever shorten the line |
+| `fit-heights { to, id, across: [min, max] }` | `heights-fitted { id, fits, clamped }` after fitting the user's line into the band `across`: view px along the line's normal about its resting centre (the `metric` base line), like `envelope.across_px`, e.g. the rows the camera's region sees. The line moves across (never along) only as far as needed; if its across range is wider than the band, the deformation or the scan's height gain (a `MatchScale`/`FromAngle` gain becomes `Manual` at the derived value) is first lowered to the largest that fits. Length, motion, scan scale and position along stay. `fits` is false, and nothing changes, when the line's width and motion alone are wider than the band; `clamped` names what changed (`position`, `deformation`, `scan height`, plus what a limit then changed). A band with `min >= max`, or a view without a size yet, answers `error` with the `id`. During a session it applies when the session ends |
 
 The live view must stay visible: hidden windows get no animation frames, so no `shown`.
 

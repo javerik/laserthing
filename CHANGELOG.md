@@ -3,6 +3,17 @@
 ## Unreleased
 
 ### Added
+- A controller can fit the line's heights into a band: `fit-heights { across: [min, max] }`
+  (view px along the line's normal about its resting centre, like `Envelope.across_px`),
+  answered with `heights-fitted { fits, clamped }`, moves the user's line across (never along)
+  only as far as needed and, where the band is narrower, lowers the deformation or the scan's
+  height gain (a `MatchScale`/`FromAngle` gain becomes `Manual` at the derived value). Length,
+  motion, scan scale and position along stay, so only the heights' scale changes; `fits` is
+  false, with nothing changed, when the line's width and motion alone are too wide, and a bad
+  band or a view without a size answers `error` (rustcamserve#141). Core:
+  `calibration::fit_heights`, `HeightsFit`. JS: `Emulator.fitHeights`, `HeightsFitted`,
+  `RemoteTarget.fitHeights` (optional; a target without it answers `error`),
+  `LaserlineStore.fitHeights()`.
 - Remote status fields for the window: `visible`, `fullscreen`, `slicerOpen`, `controls`
   and `screen` (all optional, so older controllers ignore them), and a `bye` message when the
   window goes away (`pagehide` or `RemoteHost.close()`), so a controller can tell a closed
@@ -105,6 +116,11 @@
   are compiled as doctests.
 
 ### Changed
+- The camera field's and the limit's outlines are no longer drawn where a camera films the
+  view: never in the view-only page (`?view=detached`), and not while a scan plays (in the
+  page and the detached view); otherwise the *Outline* checkbox decides as before. A camera
+  scanning the line read them as laser points (rustcamserve#141). JS:
+  `LaserlineStore.outlinesShown`, `scanPlaying`.
 - `LaserUi::begin_frame` clamps `dt` to `MAX_FRAME_DT` (0.25 s). The desktop app
   stores its layout under `layout` (the old `dock` / `view_placement` keys are read once).
 - `profileCurve`'s parameter is `widthPx`; the wasm `start` hook is no longer typed.
