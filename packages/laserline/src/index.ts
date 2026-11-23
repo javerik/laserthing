@@ -43,6 +43,7 @@ export {
   REMOTE_VERSION,
   RemoteHost,
   type FromLaserline,
+  type HeightsFitted,
   type RemoteHostOptions,
   type RemoteControls,
   type RemoteMetric,

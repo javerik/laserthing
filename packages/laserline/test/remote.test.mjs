@@ -27,6 +27,12 @@ function fakeTarget() {
       calls.push('reset-length');
       return { length: 100, length_unit: 'Percent' };
     },
+    fitHeights(across) {
+      calls.push(['fit-heights', across]);
+      if (across[1] - across[0] < 4) return { fits: false, clamped: [] };
+      if (across[0] > 0) throw new Error('the view has no size yet');
+      return { fits: true, clamped: ['position', 'scan height'] };
+    },
     begin: () => calls.push('begin'),
     end: () => calls.push('end'),
     show(pattern, rendered) {
@@ -189,6 +195,37 @@ test('resetting the line length', async () => {
   c.send({ type: 'reset-length', to: h.id, id: 5 });
   assert.deepEqual(await c.next('length-reset'), { v: 1, type: 'length-reset', host: h.id, id: 5, length: 100, length_unit: 'Percent' });
   assert.deepEqual(target.calls, ['reset-length']);
+});
+
+test('fitting the heights into a band', async () => {
+  const name = 'remote-test-heights';
+  const target = fakeTarget();
+  const h = host(target, { channel: name });
+  const c = controller(name);
+  c.send({ type: 'fit-heights', to: h.id, id: 6, across: [-40, 12] });
+  assert.deepEqual(await c.next('heights-fitted'), { v: 1, type: 'heights-fitted', host: h.id, id: 6, fits: true, clamped: ['position', 'scan height'] });
+  c.send({ type: 'fit-heights', to: h.id, id: 7, across: [-1, 1] });
+  assert.deepEqual(await c.next('heights-fitted'), { v: 1, type: 'heights-fitted', host: h.id, id: 7, fits: false, clamped: [] });
+  // The target's refusal, and a band that isn't one, answer `error` with the id.
+  c.send({ type: 'fit-heights', to: h.id, id: 8, across: [5, 20] });
+  assert.deepEqual(await c.next('error'), { v: 1, type: 'error', host: h.id, id: 8, message: 'the view has no size yet' });
+  for (const [id, across] of [[9, [3, 3]], [10, [0, Number.NaN]], [11, [1]], [12, undefined]]) {
+    c.send({ type: 'fit-heights', to: h.id, id, across });
+    const e = await c.next('error');
+    assert.equal(e.id, id);
+    assert.match(e.message, /across/);
+  }
+  assert.deepEqual(target.calls, [['fit-heights', [-40, 12]], ['fit-heights', [-1, 1]], ['fit-heights', [5, 20]]]);
+});
+
+test('a target without fitHeights answers fit-heights with an error', async () => {
+  const name = 'remote-test-heights-old';
+  const target = fakeTarget();
+  delete target.fitHeights;
+  const h = host(target, { channel: name });
+  const c = controller(name);
+  c.send({ type: 'fit-heights', to: h.id, id: 1, across: [-5, 5] });
+  assert.deepEqual(await c.next('error'), { v: 1, type: 'error', host: h.id, id: 1, message: 'fit-heights is not supported' });
 });
 
 test('the metric mapping passes through, and a new revision is sent', async () => {
